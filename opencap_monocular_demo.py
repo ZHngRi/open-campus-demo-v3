@@ -31,7 +31,7 @@ FIRST_NAME = "ZHANG"
 LAST_NAME = ""
 
 # 你要上传的视频文件路径（本地文件）
-VIDEO_PATH = "video_uploader/videos/single_leg_hop_turn_around_walk.mov"
+VIDEO_PATH = "video_uploader/videos/hard.mp4"
 
 # 拍摄对象信息（可选，提高结果准确度）
 SUBJECT_MASS_KG = "75"       # 体重（公斤）
@@ -78,37 +78,11 @@ def step(message):
     print(f"{'='*60}")
 
 
-def register():
-    """注册新用户"""
-    step("1. 注册账号")
-    print(f"  用户名: {USERNAME}")
-    print(f"  邮箱: {EMAIL}")
-
-    resp = api_request("POST", "/register/", json_data={
-        "username": USERNAME,
-        "email": EMAIL,
-        "password": PASSWORD,
-        "first_name": FIRST_NAME,
-        "last_name": LAST_NAME,
-        "institution": "",
-        "reason": "",
-        "website": "",
-        "newsletter": False,
-        "profession": "",
-        "country": "",
-    })
-
-    if resp is None:
-        print("\n  ⚠️  注册失败，可能用户名已存在，尝试直接登录...")
-        return None
-
-    print(f"  ✅ 注册成功! user_id={resp.get('id')}")
-    return resp.get("token")
 
 
 def login():
     """登录获取 token"""
-    step("2. 登录")
+    step("1. 登录")
     resp = api_request("POST", "/login/", json_data={
         "username": USERNAME,
         "password": PASSWORD,
@@ -316,40 +290,11 @@ def record_and_stop(token, session_id):
     return trial_id, video_id
 
 
-def get_trial_info(token, session_id):
-    """获取 Session 状态和 Trial ID"""
-    step("7. 获取 Trial 信息")
-    headers = {"Authorization": f"Token {token}"}
-
-    resp = api_request("GET", f"/sessions/{session_id}/status/",
-                       headers=headers,
-                       params={"ret_session": "1"})
-
-    if resp is None:
-        print("  ❌ 获取状态失败")
-        sys.exit(1)
-
-    session_status = resp.get("status")
-    trial_url = resp.get("trial")
-    video_url = resp.get("video")
-    n_cameras = resp.get("n_cameras_connected", 0)
-
-    print(f"  Session 状态: {session_status}")
-
-    if not trial_url:
-        print("  ❌ 没有找到 Trial，请检查 record/stop 流程")
-        sys.exit(1)
-
-    trial_id = trial_url.split("/")[-2] if trial_url.endswith("/") else trial_url.split("/")[-1]
-    print(f"  Trial ID: {trial_id}")
-    print(f"  已连接相机数: {n_cameras}")
-
-    return trial_id, session_status
 
 
 def upload_video(token, trial_id, video_id):
     """上传本地视频文件到已有的 Video 记录"""
-    step("8. 上传视频")
+    step("7. 上传视频")
     video_path = Path(VIDEO_PATH)
     if not video_path.exists():
         print(f"  ❌ 视频文件不存在: {video_path}")
@@ -382,7 +327,7 @@ def wait_for_processing(token, session_id):
     headers = {"Authorization": f"Token {token}"}
 
     max_wait = 1800  # 最多等 30 分钟
-    check_interval = 15  # 每 15 秒检查一次
+    check_interval = 10  # 每 3 秒检查一次
     waited = 0
     last_status = None
 
@@ -523,22 +468,11 @@ def download_results(token, session_id):
 
 
 def main():
-    print("""
-╔══════════════════════════════════════════════════════════╗
-║     OpenCap 单目动作捕捉 API Demo                       ║
-║     上传视频 → 云端处理 → 获取 3D 运动学结果            ║
-╚══════════════════════════════════════════════════════════╝
-    """)
 
-    # ----- 注册/登录 -----
-    token = register()
 
-    if token is None:
-        # 注册失败，尝试登录（可能已注册）
-        token, otp_sent = login()
-    else:
-        # 注册成功，token 已返回
-        _, otp_sent = login()  # 登录获取完整状态
+
+    token, otp_sent = login()
+
 
     # ----- OTP 验证 -----
     # 如果已在本设备验证过，可能跳过
@@ -549,13 +483,12 @@ def main():
     else:
         print("\n  ✅ 已在本设备验证过 OTP，跳过")
 
+
+
     # ----- 核心流程 -----
     session_id = create_mono_session(token)
     set_metadata(token, session_id)
     trial_id, video_id = record_and_stop(token, session_id)
-
-    # 获取 trial 信息
-    _, session_status = get_trial_info(token, session_id)
 
     # 上传视频（使用预创建的 video_id）
     upload_video(token, trial_id, video_id)
