@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual env
+venv/
+.venv/
+env/
+ENV/
+
+# Conda
+.conda/
+conda-meta/
+
+# Django
+db.sqlite3
+*.sqlite3
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# VSCode
+.vscode/
+
+# JetBrains
+.idea/
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Media files
+media/
+
+# Uploaded videos
+videos/
+uploads/
+
+# OpenCap generated data
+results/s
+output/
+outputs/
+
+# Claude Code
+.claude/
+
+# Local runtime files
+*.pid
+*.sock
+
+# PostgreSQL dumps
+*.sql
+
+# Redis dumps
+dump.rdb
