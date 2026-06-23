@@ -51,7 +51,6 @@ __pycache__/
 
 
 sender/outputs/
-received_data/
 
     # JetBrains
 .idea/
