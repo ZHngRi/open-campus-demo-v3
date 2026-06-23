@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenCap Manager</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:monospace;max-width:900px;margin:20px auto;padding:10px;background:#111;color:#eee}
+button,input{padding:6px 12px;margin:3px;font-family:inherit;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+button:hover{background:#444}
+button:disabled{opacity:.5;cursor:not-allowed}
+.section{border:1px solid #333;padding:12px;margin:10px 0;border-radius:4px}
+h2{font-size:16px;margin:0 0 8px;color:#0cf}
+.file{border:1px solid #222;padding:6px;margin:4px 0;cursor:pointer}
+.file:hover{background:#222}
+.result{margin:5px 0;padding:4px;font-size:13px}
+.result.ok{color:#0f0}.result.err{color:#f44}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid #0cf;border-top-color:transparent;border-radius:50%;animation:s .6s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+#toast{position:fixed;top:20px;right:20px;z-index:999}
+.toast{padding:10px 16px;margin-bottom:8px;border-radius:4px;font-size:14px;animation:in .3s ease;max-width:400px}
+.toast.err{background:#c0392b;color:#fff}
+.toast.ok{background:#27ae60;color:#fff}
+.toast.info{background:#2980b9;color:#fff}
+@keyframes in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<h1>OpenCap Manager</h1>
+<div id="toast"></div>
+
+<div class="section">
+  <h2>上传视频</h2>
+  <input type="file" id="videoFile" accept=".mp4,.mov">
+  <button id="btnUpload" onclick="uploadVideo()">上传</button>
+  <div id="uploadMsg" class="result"></div>
+</div>
+
+<div class="section">
+  <h2>等待传输到 OpenCap API</h2>
+  <div id="pendingList">暂无</div>
+</div>
+
+<div class="section">
+  <h2>Sessions <button id="btnRefresh" onclick="loadSessions()">刷新</button></h2>
+  <div id="sessionsList">加载中...</div>
+</div>
+
+<div class="section">
+  <h2>文件</h2>
+  <div id="filesPanel">点击 session 查看文件</div>
+</div>
+
+<div class="section">
+  <h2>当前 Active</h2>
+  <div id="activeInfo">加载中...</div>
+</div>
+
+<div class="section">
+  <h2>发送</h2>
+  <label>Host: <input type="text" id="receiverHost" value="100.82.248.104" size="16"></label>
+  <label>Port: <input type="number" id="receiverPort" value="5005" style="width:70px"></label>
+  <button id="btnSend" onclick="sendActive()">发送 Active File</button>
+  <div id="sendMsg" class="result"></div>
+</div>
+
+<script>
+function toast(msg, type) {
+  type = type || "info";
+  var el = document.createElement("div");
+  el.className = "toast " + type;
+  el.textContent = msg;
+  document.getElementById("toast").appendChild(el);
+  setTimeout(function(){ el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, 3000);
+  setTimeout(function(){ el.remove(); }, 3300);
+}
+
+async function rawFetch(method, url, body) {
+  var opts = {method: method};
+  if (body && body instanceof FormData) {
+    opts.body = body;
+  } else if (body) {
+    opts.headers = {"Content-Type": "application/json"};
+    opts.body = JSON.stringify(body);
+  }
+  var r = await fetch(url, opts);
+  if (!r.ok) {
+    var txt = await r.text();
+    throw new Error(r.status + " " + txt.slice(0, 150));
+  }
+  return r.json();
+}
+
+// ---- 上传 ----
+async function uploadVideo() {
+  var f = document.getElementById("videoFile").files[0];
+  if (!f) return toast("请先选择文件", "err");
+  var btn = document.getElementById("btnUpload");
+  btn.disabled = true; btn.textContent = "上传中...";
+  var fd = new FormData();
+  fd.append("file", f);
+  try {
+    var data = await rawFetch("POST", "/videos/upload", fd);
+    toast("上传完成: " + data.session_id, "ok");
+    document.getElementById("uploadMsg").innerHTML = '<span class="result ok">' + data.session_id + '</span>';
+    loadSessions();
+  } catch (e) {
+    toast("上传失败: " + e.message, "err");
+  }
+  btn.disabled = false; btn.textContent = "上传";
+}
+
+// ---- Sessions ----
+function esc(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function jsArg(v) {
+  return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function isPendingUpload(s) {
+  return s.video_path && !s.api_session_id && s.status !== "processing" && s.status !== "done";
+}
+
+var autoRefreshTimer = null;
+var loadingSessions = false;
+
+function needsAutoRefresh(sessions) {
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    if (s.status === "processing" || s.download_status === "downloading") return true;
+  }
+  return false;
+}
+
+function updateAutoRefresh(sessions) {
+  var shouldRun = needsAutoRefresh(sessions);
+  if (shouldRun && !autoRefreshTimer) {
+    autoRefreshTimer = setInterval(function() {
+      loadSessions({silent: true});
+    }, 10000);
+  } else if (!shouldRun && autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+function renderPendingUploads(sessions) {
+  var html = "";
+  for (var i = sessions.length - 1; i >= 0; i--) {
+    var s = sessions[i];
+    if (!isPendingUpload(s)) continue;
+    var sid = s.session_id;
+    var st = s.status;
+    html += '<div style="padding:4px;margin:4px 0;border-bottom:1px solid #222">' +
+      '<b>' + esc(s.name || "input.mp4") + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + '] ' +
+      '<button onclick="processOpenCap(\'' + jsArg(sid) + '\')">传送到 OpenCap API</button>' +
+      ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
+      '</div>';
+  }
+  document.getElementById("pendingList").innerHTML = html || "暂无";
+}
+
+function renderSessions(sessions) {
+  var html = "";
+  for (var i = sessions.length - 1; i >= 0; i--) {
+    var s = sessions[i];
+    if (isPendingUpload(s)) continue;
+    var sid = s.session_id;
+    var st = s.status;
+    var action = "";
+    var isRemote = sid.startsWith("remote_");
+    if (st === "processing") action = '<span class="spinner"></span> 处理中... <button onclick="loadSessions()">刷新</button>';
+    else if (st === "done") action = '<button onclick="showFiles(\'' + jsArg(sid) + '\')">文件</button>';
+    else if (st === "failed" && !isRemote && s.video_path) action = '<span style="color:#f44">失败</span> <button onclick="processOpenCap(\'' + jsArg(sid) + '\')">重试</button>';
+    else if (st === "failed") action = '<span style="color:#f44">官网失败</span>';
+
+    var download = "";
+    if (s.download_status === "downloading") download = ' <span style="color:#0cf">结果下载中</span>';
+    else if (s.download_status === "failed") download = ' <span style="color:#f90">' + esc(s.note || "结果下载失败") + '</span>';
+
+    var name = esc(s.name || sid);
+    var remoteTag = s.api_session_id ? ' <span style="color:#888">OpenCap</span>' : "";
+
+    html += '<div style="padding:4px;margin:4px 0;border-bottom:1px solid #222">' +
+      '<b>' + name + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + ']' + remoteTag + download + ' ' + action +
+      ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
+      '</div>';
+  }
+  document.getElementById("sessionsList").innerHTML = html || "暂无";
+}
+
+async function loadSessions(opts) {
+  opts = opts || {};
+  if (loadingSessions) return;
+  loadingSessions = true;
+
+  var btn = document.getElementById("btnRefresh");
+  if (!opts.silent) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 刷新中...';
+  }
+
+  try {
+    await rawFetch("POST", "/sessions/sync-all");
+    var local = await rawFetch("GET", "/sessions");
+    renderPendingUploads(local.sessions);
+    renderSessions(local.sessions);
+    updateAutoRefresh(local.sessions);
+    if (!opts.silent) toast("已更新 " + local.sessions.length + " 个 session", "ok");
+  } catch (e) {
+    if (!opts.silent) toast("刷新失败: " + e.message, "err");
+  }
+
+  if (!opts.silent) {
+    btn.disabled = false;
+    btn.innerHTML = "刷新";
+  }
+  loadingSessions = false;
+}
+
+// ---- OpenCap 处理 ----
+async function processOpenCap(sid) {
+  toast("已传送到 OpenCap API，开始处理...", "info");
+  rawFetch("POST", "/sessions/" + sid + "/process-opencap").then(function() {
+    toast("已送入 OpenCap API", "ok");
+    loadSessions();
+  }).catch(function(e) {
+    toast("处理失败: " + e.message, "err");
+    loadSessions();
+  });
+  loadSessions();
+}
+
+// ---- 文件 ----
+async function showFiles(sid) {
+  var data = await rawFetch("GET", "/sessions/" + sid + "/files");
+  if (data.error) return toast(data.error, "err");
+  var html = "<b>" + esc(sid) + "</b><br>";
+  for (var i = 0; i < data.files.length; i++) {
+    var f = data.files[i];
+    html += '<div class="file" onclick="setActive(\'' + sid + '\',\'' + f.file_path + '\',\'' + f.file_type + '\')">' +
+      esc(f.file_name) + ' (' + esc(f.file_type) + ')</div>';
+  }
+  document.getElementById("filesPanel").innerHTML = html || "无文件";
+}
+
+// ---- Active ----
+async function setActive(sid, path, type) {
+  var host = document.getElementById("receiverHost").value;
+  var port = parseInt(document.getElementById("receiverPort").value) || 5005;
+  await rawFetch("POST", "/active-file", {session_id: sid, file_path: path, file_type: type,
+    send_mode: "marker", receiver_host: host, receiver_port: port});
+  toast("已设置: " + path.split("/").pop(), "ok");
+  loadActive();
+}
+
+async function loadActive() {
+  var data = await rawFetch("GET", "/active-file");
+  document.getElementById("activeInfo").innerHTML = '<pre style="margin:0;font-size:12px">' + JSON.stringify(data, null, 2) + '</pre>';
+}
+
+// ---- 删除 ----
+async function deleteSession(sid) {
+  if (!confirm("删除 " + sid + " ?")) return;
+  await rawFetch("DELETE", "/sessions/" + sid);
+  toast("已删除", "ok");
+  loadSessions();
+  document.getElementById("filesPanel").innerHTML = "";
+  loadActive();
+}
+
+// ---- 发送 ----
+async function sendActive() {
+  var btn = document.getElementById("btnSend");
+  btn.disabled = true; btn.textContent = "发送中...";
+
+  var host = document.getElementById("receiverHost").value;
+  var port = parseInt(document.getElementById("receiverPort").value) || 5005;
+  var ac = await rawFetch("GET", "/active-file");
+  await rawFetch("POST", "/active-file", Object.assign({}, ac, {receiver_host: host, receiver_port: port}));
+
+  var el = document.getElementById("sendMsg");
+  el.innerHTML = '<span class="spinner"></span> 发送中...';
+
+  try {
+    var r = await rawFetch("POST", "/send-active-file");
+    el.innerHTML = '<span class="result ok">OK ' + r.frames + ' 帧</span>';
+    toast("发送完成: " + r.frames + " 帧", "ok");
+  } catch (e) {
+    el.innerHTML = '<span class="result err">ERR ' + e.message + '</span>';
+    toast("发送失败: " + e.message, "err");
+  }
+  btn.disabled = false; btn.textContent = "发送 Active File";
+}
+
+loadSessions();
+loadActive();
+</script>
+</body>
+</html>
