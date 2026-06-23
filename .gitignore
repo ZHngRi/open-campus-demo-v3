@@ -48,8 +48,8 @@ __pycache__/
 .DS_Store
 
 
-
-
+sender/outputs/
+received_data/
 
     # JetBrains
 .idea/
@@ -78,7 +78,7 @@ uploads/
 # OpenCap generated data
 results/s
 output/
-outputs/
+sender/outputs/
 
 # Claude Code
 .claude/
