@@ -92,3 +92,6 @@ outputs/
 
 # Redis dumps
 dump.rdb
+__pycache__/
+*.pyc
+.DS_Store
