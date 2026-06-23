@@ -5,7 +5,9 @@ __pycache__/
 
 # C extensions
 *.so
-
+.agents/
+.claude/
+.codex/
 # Build
 build/
 dist/
