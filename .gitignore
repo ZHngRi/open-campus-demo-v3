@@ -106,3 +106,6 @@ __pycache__/
 
 testv3/
 video/
+
+*.mp4
+*.mov
