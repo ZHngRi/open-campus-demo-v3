@@ -43,7 +43,15 @@ htmlcov/
 # VSCode
 .vscode/
 
-# JetBrains
+__pycache__/
+*.pyc
+.DS_Store
+
+
+
+
+
+    # JetBrains
 .idea/
 
 # macOS
