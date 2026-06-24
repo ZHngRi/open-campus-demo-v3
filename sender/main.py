@@ -22,7 +22,7 @@ from sender.json_store import (
     read_sessions, add_session, update_session, write_sessions,
     read_active, write_active,
 )
-from sender.marker_sender import send_marker_file
+from sender.marker_sender import send_session
 
 app = FastAPI()
 
@@ -692,19 +692,22 @@ def send_active():
     global send_thread
 
     config = read_active()
-    file_path = config.get("file_path")
     host = config.get("receiver_host", "127.0.0.1")
-    port = config.get("receiver_port", 5005)
+    trc_port = int(config.get("receiver_port", 5005))
+    mot_port = int(config.get("receiver_port_mot", 5006))
+    trc_path = config.get("file_path", "")
+    mot_path = config.get("file_path_so", "")
 
-    if not file_path or not Path(file_path).exists():
-        return JSONResponse({"error": f"文件不存在: {file_path}"}, 400)
+    if not trc_path and not mot_path:
+        return JSONResponse({"error": "没有设置 IK 或 SO 文件"}, 400)
 
     item = {
         "id": str(uuid.uuid4())[:8],
-        "file": file_path,
-        "file_name": Path(file_path).name,
+        "trc": trc_path,
+        "mot": mot_path,
         "host": host,
-        "port": int(port),
+        "trc_port": trc_port,
+        "mot_port": mot_port,
     }
     send_queue.append(item)
 
@@ -719,7 +722,8 @@ def _process_queue():
     while send_queue:
         item = send_queue[0]
         try:
-            send_marker_file(item["file"], item["host"], item["port"])
+            send_session(item["trc"], item["mot"], item["host"],
+                        item["trc_port"], item["mot_port"])
         except Exception:
             pass
         send_queue.pop(0)

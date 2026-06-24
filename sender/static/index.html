@@ -55,14 +55,21 @@ h2{font-size:16px;margin:0 0 8px;color:#0cf}
 
 <div class="section">
   <h2>当前 Active</h2>
-  <div id="activeInfo">加载中...</div>
+  <div style="margin:4px 0">
+    <b>IK (trc):</b> <input type="text" id="activeIK" style="width:70%;background:#222;color:#0cf;border:1px solid #555;padding:3px" placeholder="receiver 端 .trc 路径">
+  </div>
+  <div style="margin:4px 0">
+    <b>SO (mot):</b> <input type="text" id="activeSO" style="width:70%;background:#222;color:#f0c;border:1px solid #555;padding:3px" placeholder="receiver 端 .mot 路径">
+  </div>
+  <button onclick="saveActive()">保存</button>
 </div>
 
 <div class="section">
   <h2>发送</h2>
   <label>Host: <input type="text" id="receiverHost" value="100.82.248.104" size="16"></label>
-  <label>Port: <input type="number" id="receiverPort" value="5005" style="width:70px"></label>
-  <button onclick="sendActive()">加入发送队列</button>
+  <label>TRC: <input type="number" id="trcPort" value="5005" style="width:70px"></label>
+  <label>MOT: <input type="number" id="motPort" value="5006" style="width:70px"></label>
+  <button onclick="sendActive()">加入发送队列 (IK+SO)</button>
   <div id="sendMsg" class="result"></div>
   <div id="queuePanel" style="margin-top:8px"></div>
 </div>
@@ -256,17 +263,30 @@ async function showFiles(sid) {
 
 // ---- Active ----
 async function setActive(sid, path, type) {
-  var host = document.getElementById("receiverHost").value;
-  var port = parseInt(document.getElementById("receiverPort").value) || 5005;
-  await rawFetch("POST", "/active-file", {session_id: sid, file_path: path, file_type: type,
-    send_mode: "marker", receiver_host: host, receiver_port: port});
-  toast("已设置: " + path.split("/").pop(), "ok");
-  loadActive();
+  // 点击文件时自动填入路径
+  if (type === "mot") {
+    document.getElementById("activeSO").value = path;
+  } else {
+    document.getElementById("activeIK").value = path;
+  }
+  saveActive();
+  toast("已填入: " + path.split("/").pop(), "ok");
+}
+
+async function saveActive() {
+  var ac = await rawFetch("GET", "/active-file");
+  ac.file_path = document.getElementById("activeIK").value;
+  ac.file_path_so = document.getElementById("activeSO").value;
+  ac.receiver_host = document.getElementById("receiverHost").value;
+  ac.receiver_port = parseInt(document.getElementById("trcPort").value) || 5005;
+  ac.receiver_port_mot = parseInt(document.getElementById("motPort").value) || 5006;
+  await rawFetch("POST", "/active-file", ac);
 }
 
 async function loadActive() {
   var data = await rawFetch("GET", "/active-file");
-  document.getElementById("activeInfo").innerHTML = '<pre style="margin:0;font-size:12px">' + JSON.stringify(data, null, 2) + '</pre>';
+  document.getElementById("activeIK").value = data.file_path || "";
+  document.getElementById("activeSO").value = data.file_path_so || "";
 }
 
 // ---- 删除 ----
@@ -283,14 +303,11 @@ async function deleteSession(sid) {
 var queueTimer = null;
 
 async function sendActive() {
-  var host = document.getElementById("receiverHost").value;
-  var port = parseInt(document.getElementById("receiverPort").value) || 5005;
-  var ac = await rawFetch("GET", "/active-file");
-  await rawFetch("POST", "/active-file", Object.assign({}, ac, {receiver_host: host, receiver_port: port}));
+  await saveActive();
 
   var r = await rawFetch("POST", "/send-active-file");
   if (r.queued) {
-    toast("已加入队列", "ok");
+    toast("已加入队列 (IK+SO)", "ok");
     showQueue();
     if (!queueTimer) queueTimer = setInterval(showQueue, 2000);
   }
@@ -308,8 +325,9 @@ async function showQueue() {
   for (var i = 0; i < q.items.length; i++) {
     var item = q.items[i];
     var label = i === 0 && q.sending ? '⏳ ' : '';
+    var name = (item.trc ? item.trc.split('/').pop() : '') + ' + ' + (item.mot ? item.mot.split('/').pop() : '');
     html += '<div style="padding:3px;border-bottom:1px solid #222">' +
-      label + item.file_name +
+      label + 'IK+SO: ' + name +
       ' <button onclick="removeQueue(\'' + item.id + '\')" style="font-size:10px;padding:2px 6px;background:#633">x</button>' +
       '</div>';
   }
