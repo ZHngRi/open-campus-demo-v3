@@ -45,6 +45,13 @@ htmlcov/
 # VSCode
 .vscode/
 
+sender/data/
+sender/outputs/
+receiver/receiver_data/
+__pycache__/
+*.pyc
+.DS_Store
+
 __pycache__/
 *.pyc
 .DS_Store
