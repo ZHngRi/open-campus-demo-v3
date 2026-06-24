@@ -719,7 +719,7 @@ class StaticOptimizationPlayer:
                 )
 
                 self.model.updVisualizer().show(self.state)
-                time.sleep(frame_delay)
+                # time.sleep(frame_delay)
 
 
 def _print_top_results(osim, frame_time, static_opt, activation_names=None):
