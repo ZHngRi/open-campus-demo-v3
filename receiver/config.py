@@ -103,7 +103,7 @@ SO_MAX_FRAMES = None  # 调试时可设为小整数，例如 10
 SO_MUSCLE_ONLY_ACTIVATION_TOP = True
 
 # -- 帧采样 --
-SO_STEP_INTERVAL = 50
+SO_STEP_INTERVAL = 10
 SO_INCLUDE_LAST_FRAME = True
 
 # -- 状态模型 --

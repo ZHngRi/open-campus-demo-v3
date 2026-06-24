@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -32,44 +32,44 @@ h2{font-size:16px;margin:0 0 8px;color:#0cf}
 <div id="toast"></div>
 
 <div class="section">
-  <h2>上传视频</h2>
+  <h2>Upload Video</h2>
   <input type="file" id="videoFile" accept=".mp4,.mov">
-  <button id="btnUpload" onclick="uploadVideo()">上传</button>
+  <button id="btnUpload" onclick="uploadVideo()">Upload</button>
   <div id="uploadMsg" class="result"></div>
 </div>
 
 <div class="section">
-  <h2>等待传输到 OpenCap API</h2>
-  <div id="pendingList">暂无</div>
+  <h2>Waiting to Send to OpenCap API</h2>
+  <div id="pendingList">None</div>
 </div>
 
 <div class="section">
-  <h2>Sessions <button id="btnRefresh" onclick="loadSessions()">刷新</button></h2>
-  <div id="sessionsList">加载中...</div>
+  <h2>Sessions <button id="btnRefresh" onclick="loadSessions()">Refresh</button></h2>
+  <div id="sessionsList">Loading...</div>
 </div>
 
 <div class="section">
-  <h2>文件</h2>
-  <div id="filesPanel">点击 session 查看文件</div>
+  <h2>Files</h2>
+  <div id="filesPanel">Click a session to view files</div>
 </div>
 
 <div class="section">
-  <h2>当前 Active</h2>
+  <h2>Current Active</h2>
   <div style="margin:4px 0">
-    <b>IK (trc):</b> <input type="text" id="activeIK" style="width:70%;background:#222;color:#0cf;border:1px solid #555;padding:3px" placeholder="receiver 端 .trc 路径">
+    <b>IK (trc):</b> <input type="text" id="activeIK" style="width:70%;background:#222;color:#0cf;border:1px solid #555;padding:3px" placeholder="receiver-side .trc path">
   </div>
   <div style="margin:4px 0">
-    <b>SO (mot):</b> <input type="text" id="activeSO" style="width:70%;background:#222;color:#f0c;border:1px solid #555;padding:3px" placeholder="receiver 端 .mot 路径">
+    <b>SO (mot):</b> <input type="text" id="activeSO" style="width:70%;background:#222;color:#f0c;border:1px solid #555;padding:3px" placeholder="receiver-side .mot path">
   </div>
-  <button onclick="saveActive()">保存</button>
+  <button onclick="saveActive()">Save</button>
 </div>
 
 <div class="section">
-  <h2>发送</h2>
+  <h2>Send</h2>
   <label>Host: <input type="text" id="receiverHost" value="100.82.248.104" size="16"></label>
   <label>TRC: <input type="number" id="trcPort" value="5005" style="width:70px"></label>
   <label>MOT: <input type="number" id="motPort" value="5006" style="width:70px"></label>
-  <button onclick="sendActive()">加入发送队列 (IK+SO)</button>
+  <button onclick="sendActive()">Add to Send Queue (IK+SO)</button>
   <div id="sendMsg" class="result"></div>
   <div id="queuePanel" style="margin-top:8px"></div>
 </div>
@@ -101,23 +101,23 @@ async function rawFetch(method, url, body) {
   return r.json();
 }
 
-// ---- 上传 ----
+// ---- Upload ----
 async function uploadVideo() {
   var f = document.getElementById("videoFile").files[0];
-  if (!f) return toast("请先选择文件", "err");
+  if (!f) return toast("Please choose a file first", "err");
   var btn = document.getElementById("btnUpload");
-  btn.disabled = true; btn.textContent = "上传中...";
+  btn.disabled = true; btn.textContent = "Uploading...";
   var fd = new FormData();
   fd.append("file", f);
   try {
     var data = await rawFetch("POST", "/videos/upload", fd);
-    toast("上传完成: " + data.session_id, "ok");
+    toast("Upload complete: " + data.session_id, "ok");
     document.getElementById("uploadMsg").innerHTML = '<span class="result ok">' + data.session_id + '</span>';
     loadSessions();
   } catch (e) {
-    toast("上传失败: " + e.message, "err");
+    toast("Upload failed: " + e.message, "err");
   }
-  btn.disabled = false; btn.textContent = "上传";
+  btn.disabled = false; btn.textContent = "Upload";
 }
 
 // ---- Sessions ----
@@ -170,11 +170,11 @@ function renderPendingUploads(sessions) {
     var st = s.status;
     html += '<div style="padding:4px;margin:4px 0;border-bottom:1px solid #222">' +
       '<b>' + esc(s.name || "input.mp4") + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + '] ' +
-      '<button onclick="processOpenCap(\'' + jsArg(sid) + '\')">传送到 OpenCap API</button>' +
+      '<button onclick="processOpenCap(\'' + jsArg(sid) + '\')">Send to OpenCap API</button>' +
       ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
       '</div>';
   }
-  document.getElementById("pendingList").innerHTML = html || "暂无";
+  document.getElementById("pendingList").innerHTML = html || "None";
 }
 
 function renderSessions(sessions) {
@@ -186,14 +186,14 @@ function renderSessions(sessions) {
     var st = s.status;
     var action = "";
     var isRemote = sid.startsWith("remote_");
-    if (st === "processing") action = '<span class="spinner"></span> 处理中... <button onclick="loadSessions()">刷新</button>';
-    else if (st === "done") action = '<button onclick="showFiles(\'' + jsArg(sid) + '\')">文件</button>';
-    else if (st === "failed" && !isRemote && s.video_path) action = '<span style="color:#f44">失败</span> <button onclick="processOpenCap(\'' + jsArg(sid) + '\')">重试</button>';
-    else if (st === "failed") action = '<span style="color:#f44">官网失败</span>';
+    if (st === "processing") action = '<span class="spinner"></span> Processing... <button onclick="loadSessions()">Refresh</button>';
+    else if (st === "done") action = '<button onclick="showFiles(\'' + jsArg(sid) + '\')">Files</button>';
+    else if (st === "failed" && !isRemote && s.video_path) action = '<span style="color:#f44">Failed</span> <button onclick="processOpenCap(\'' + jsArg(sid) + '\')">Retry</button>';
+    else if (st === "failed") action = '<span style="color:#f44">Remote failed</span>';
 
     var download = "";
-    if (s.download_status === "downloading") download = ' <span style="color:#0cf">结果下载中</span>';
-    else if (s.download_status === "failed") download = ' <span style="color:#f90">' + esc(s.note || "结果下载失败") + '</span>';
+    if (s.download_status === "downloading") download = ' <span style="color:#0cf">Downloading results</span>';
+    else if (s.download_status === "failed") download = ' <span style="color:#f90">' + esc(s.note || "Result download failed") + '</span>';
 
     var name = esc(s.name || sid);
     var remoteTag = s.api_session_id ? ' <span style="color:#888">OpenCap</span>' : "";
@@ -203,7 +203,7 @@ function renderSessions(sessions) {
       ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
       '</div>';
   }
-  document.getElementById("sessionsList").innerHTML = html || "暂无";
+  document.getElementById("sessionsList").innerHTML = html || "None";
 }
 
 async function loadSessions(opts) {
@@ -214,7 +214,7 @@ async function loadSessions(opts) {
   var btn = document.getElementById("btnRefresh");
   if (!opts.silent) {
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 刷新中...';
+    btn.innerHTML = '<span class="spinner"></span> Refreshing...';
   }
 
   try {
@@ -223,54 +223,58 @@ async function loadSessions(opts) {
     renderPendingUploads(local.sessions);
     renderSessions(local.sessions);
     updateAutoRefresh(local.sessions);
-    if (!opts.silent) toast("已更新 " + local.sessions.length + " 个 session", "ok");
+    if (!opts.silent) toast("Updated " + local.sessions.length + " sessions", "ok");
   } catch (e) {
-    if (!opts.silent) toast("刷新失败: " + e.message, "err");
+    if (!opts.silent) toast("Refresh failed: " + e.message, "err");
   }
 
   if (!opts.silent) {
     btn.disabled = false;
-    btn.innerHTML = "刷新";
+    btn.innerHTML = "Refresh";
   }
   loadingSessions = false;
 }
 
-// ---- OpenCap 处理 ----
+// ---- OpenCap Processing ----
 async function processOpenCap(sid) {
-  toast("已传送到 OpenCap API，开始处理...", "info");
+  toast("Sent to OpenCap API. Processing started...", "info");
   rawFetch("POST", "/sessions/" + sid + "/process-opencap").then(function() {
-    toast("已送入 OpenCap API", "ok");
+    toast("Submitted to OpenCap API", "ok");
     loadSessions();
   }).catch(function(e) {
-    toast("处理失败: " + e.message, "err");
+    toast("Processing failed: " + e.message, "err");
     loadSessions();
   });
   loadSessions();
 }
 
-// ---- 文件 ----
+// ---- Files ----
 async function showFiles(sid) {
   var data = await rawFetch("GET", "/sessions/" + sid + "/files");
   if (data.error) return toast(data.error, "err");
   var html = "<b>" + esc(sid) + "</b><br>";
   for (var i = 0; i < data.files.length; i++) {
     var f = data.files[i];
-    html += '<div class="file" onclick="setActive(\'' + sid + '\',\'' + f.file_path + '\',\'' + f.file_type + '\')">' +
+    html += '<div class="file" onclick="setActive(\'' + jsArg(sid) + '\',\'' + jsArg(f.file_path) + '\',\'' + jsArg(f.file_type) + '\')">' +
       esc(f.file_name) + ' (' + esc(f.file_type) + ')</div>';
   }
-  document.getElementById("filesPanel").innerHTML = html || "无文件";
+  if (data.files.length === 0) {
+    html += '<div class="result">No result files found</div>';
+  }
+  document.getElementById("filesPanel").innerHTML = html;
+  if (data.files.length > 0) loadSessions({silent: true});
 }
 
 // ---- Active ----
 async function setActive(sid, path, type) {
-  // 点击文件时自动填入路径
+  // Fill the path automatically when a file is clicked.
   if (type === "mot") {
     document.getElementById("activeSO").value = path;
   } else {
     document.getElementById("activeIK").value = path;
   }
   saveActive();
-  toast("已填入: " + path.split("/").pop(), "ok");
+  toast("Filled: " + path.split("/").pop(), "ok");
 }
 
 async function saveActive() {
@@ -289,17 +293,17 @@ async function loadActive() {
   document.getElementById("activeSO").value = data.file_path_so || "";
 }
 
-// ---- 删除 ----
+// ---- Delete ----
 async function deleteSession(sid) {
-  if (!confirm("删除 " + sid + " ?")) return;
+  if (!confirm("Delete " + sid + " ?")) return;
   await rawFetch("DELETE", "/sessions/" + sid);
-  toast("已删除", "ok");
+  toast("Deleted", "ok");
   loadSessions();
   document.getElementById("filesPanel").innerHTML = "";
   loadActive();
 }
 
-// ---- 发送 ----
+// ---- Send ----
 var queueTimer = null;
 
 async function sendActive() {
@@ -307,34 +311,67 @@ async function sendActive() {
 
   var r = await rawFetch("POST", "/send-active-file");
   if (r.queued) {
-    toast("已加入队列 (IK+SO)", "ok");
+    toast("Added to send queue (IK+SO)", "ok");
     showQueue();
     if (!queueTimer) queueTimer = setInterval(showQueue, 2000);
+  } else if (r.error) {
+    toast(r.error, "err");
+    document.getElementById("queuePanel").innerHTML =
+      '<span class="result err">' + esc(r.error) + '</span>';
   }
 }
 
 async function showQueue() {
   var q = await rawFetch("GET", "/send-queue");
-  if (!q.sending && q.items.length === 0) {
+
+  // Check results for failures
+  var lastFailed = null;
+  var lastDone = null;
+  var results = q.results || [];
+  for (var i = 0; i < results.length; i++) {
+    if (results[i].status === "failed") lastFailed = results[i];
+    if (results[i].status === "done") lastDone = results[i];
+  }
+
+  var hasPendingItems = q.items.length > 0;
+
+  if (!q.sending && !hasPendingItems) {
     clearInterval(queueTimer);
     queueTimer = null;
-    document.getElementById("queuePanel").innerHTML = '<span class="result ok">全部发送完成</span>';
+    if (lastFailed && !lastDone) {
+      document.getElementById("queuePanel").innerHTML =
+        '<span class="result err">Send failed: ' + esc(lastFailed.error || "Unknown error") + '</span>';
+    } else if (lastFailed && lastDone) {
+      document.getElementById("queuePanel").innerHTML =
+        '<span class="result ok">Send complete, but one item failed: ' + esc(lastFailed.error || "Unknown error") + '</span>';
+    } else if (lastDone) {
+      document.getElementById("queuePanel").innerHTML =
+        '<span class="result ok">All sends complete</span>';
+    } else {
+      document.getElementById("queuePanel").innerHTML = 'Queue is empty';
+    }
     return;
   }
+
   var html = "";
   for (var i = 0; i < q.items.length; i++) {
     var item = q.items[i];
-    var label = i === 0 && q.sending ? '⏳ ' : '';
-    var name = (item.trc ? item.trc.split('/').pop() : '') + ' + ' + (item.mot ? item.mot.split('/').pop() : '');
+    var statusIcon = "";
+    if (item.status === "sending") statusIcon = '<span class="spinner"></span> ';
+    else if (item.status === "failed") statusIcon = '❌ ';
+    var trcName = item.trc ? item.trc.replace(/\\/g, '/').split('/').pop() : '';
+    var motName = item.mot ? item.mot.replace(/\\/g, '/').split('/').pop() : '';
+    var name = trcName + ' + ' + motName;
     html += '<div style="padding:3px;border-bottom:1px solid #222">' +
-      label + 'IK+SO: ' + name +
-      ' <button onclick="removeQueue(\'' + item.id + '\')" style="font-size:10px;padding:2px 6px;background:#633">x</button>' +
-      '</div>';
+      statusIcon + 'IK+SO: ' + esc(name) +
+      ' <button onclick="removeQueue(\'' + item.id + '\')" style="font-size:10px;padding:2px 6px;background:#633">x</button>';
+    if (item.error) html += '<br><span style="color:#f44;font-size:12px">' + esc(item.error) + '</span>';
+    html += '</div>';
   }
   if (q.sending && q.items.length === 0) {
-    html = '<span class="spinner"></span> 发送中...';
+    html = '<span class="spinner"></span> Sending...';
   }
-  document.getElementById("queuePanel").innerHTML = html || '队列为空';
+  document.getElementById("queuePanel").innerHTML = html || 'Queue is empty';
 }
 
 async function removeQueue(id) {
