@@ -56,6 +56,7 @@ def send_marker_file(file_path, host, port):
         raise ValueError(f"不支持的文件格式: {file_path}")
 
     sock = socket.create_connection((host, port), timeout=10)
+    sock.settimeout(None)  # 连接后取消超时，避免大数据发送时超时
 
     for f in frames:
         packet = {

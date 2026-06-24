@@ -62,8 +62,9 @@ h2{font-size:16px;margin:0 0 8px;color:#0cf}
   <h2>发送</h2>
   <label>Host: <input type="text" id="receiverHost" value="100.82.248.104" size="16"></label>
   <label>Port: <input type="number" id="receiverPort" value="5005" style="width:70px"></label>
-  <button id="btnSend" onclick="sendActive()">发送 Active File</button>
+  <button onclick="sendActive()">加入发送队列</button>
   <div id="sendMsg" class="result"></div>
+  <div id="queuePanel" style="margin-top:8px"></div>
 </div>
 
 <script>
@@ -279,27 +280,48 @@ async function deleteSession(sid) {
 }
 
 // ---- 发送 ----
-async function sendActive() {
-  var btn = document.getElementById("btnSend");
-  btn.disabled = true; btn.textContent = "发送中...";
+var queueTimer = null;
 
+async function sendActive() {
   var host = document.getElementById("receiverHost").value;
   var port = parseInt(document.getElementById("receiverPort").value) || 5005;
   var ac = await rawFetch("GET", "/active-file");
   await rawFetch("POST", "/active-file", Object.assign({}, ac, {receiver_host: host, receiver_port: port}));
 
-  var el = document.getElementById("sendMsg");
-  el.innerHTML = '<span class="spinner"></span> 发送中...';
-
-  try {
-    var r = await rawFetch("POST", "/send-active-file");
-    el.innerHTML = '<span class="result ok">OK ' + r.frames + ' 帧</span>';
-    toast("发送完成: " + r.frames + " 帧", "ok");
-  } catch (e) {
-    el.innerHTML = '<span class="result err">ERR ' + e.message + '</span>';
-    toast("发送失败: " + e.message, "err");
+  var r = await rawFetch("POST", "/send-active-file");
+  if (r.queued) {
+    toast("已加入队列", "ok");
+    showQueue();
+    if (!queueTimer) queueTimer = setInterval(showQueue, 2000);
   }
-  btn.disabled = false; btn.textContent = "发送 Active File";
+}
+
+async function showQueue() {
+  var q = await rawFetch("GET", "/send-queue");
+  if (!q.sending && q.items.length === 0) {
+    clearInterval(queueTimer);
+    queueTimer = null;
+    document.getElementById("queuePanel").innerHTML = '<span class="result ok">全部发送完成</span>';
+    return;
+  }
+  var html = "";
+  for (var i = 0; i < q.items.length; i++) {
+    var item = q.items[i];
+    var label = i === 0 && q.sending ? '⏳ ' : '';
+    html += '<div style="padding:3px;border-bottom:1px solid #222">' +
+      label + item.file_name +
+      ' <button onclick="removeQueue(\'' + item.id + '\')" style="font-size:10px;padding:2px 6px;background:#633">x</button>' +
+      '</div>';
+  }
+  if (q.sending && q.items.length === 0) {
+    html = '<span class="spinner"></span> 发送中...';
+  }
+  document.getElementById("queuePanel").innerHTML = html || '队列为空';
+}
+
+async function removeQueue(id) {
+  await rawFetch("DELETE", "/send-queue/" + id);
+  showQueue();
 }
 
 loadSessions();

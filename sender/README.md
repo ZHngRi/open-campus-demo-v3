@@ -109,6 +109,8 @@ FastAPI 后端 (sender/main.py)
 2. **远程 session 下载偶发失败**：OpenCap 的 async-download 偶尔不返回 URL，session 状态可能停留在 "processing"。点"刷新"可重试。
 3. **下拉远程 session 无视频文件**：从官网拉取的 session 只有 .mot/.trc 结果，没有原始视频。
 4. **`/sessions/` 接口超时**：测试期间创建了太多 session，官网 `/sessions/` 接口超时。改用 `/sessions/valid/` 解决。
+5. **并发发送被拒绝**：若上一次发送未完成时再次点击发送，后端返回 409 "正在发送中"。等上一次完成再发即可。
+6. **大文件发送阻塞**：发送几百帧数据时 `sendall` 会等接收端逐帧消费完才返回。不是卡死，是 TCP 背压——接收端处理一帧、发一帧、读一帧。
 
 ---
 

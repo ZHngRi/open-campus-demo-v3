@@ -8,6 +8,7 @@ OpenCap 管理后端 — FastAPI
 import shutil
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 import zipfile
@@ -24,6 +25,10 @@ from sender.json_store import (
 from sender.marker_sender import send_marker_file
 
 app = FastAPI()
+
+send_queue = []
+send_thread = None
+send_lock = threading.Lock()
 
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
@@ -684,6 +689,8 @@ def set_active(config: dict):
 
 @app.post("/send-active-file")
 def send_active():
+    global send_thread
+
     config = read_active()
     file_path = config.get("file_path")
     host = config.get("receiver_host", "127.0.0.1")
@@ -692,5 +699,42 @@ def send_active():
     if not file_path or not Path(file_path).exists():
         return JSONResponse({"error": f"文件不存在: {file_path}"}, 400)
 
-    n = send_marker_file(file_path, host, int(port))
-    return {"sent": True, "frames": n}
+    item = {
+        "id": str(uuid.uuid4())[:8],
+        "file": file_path,
+        "file_name": Path(file_path).name,
+        "host": host,
+        "port": int(port),
+    }
+    send_queue.append(item)
+
+    if send_thread is None or not send_thread.is_alive():
+        send_thread = threading.Thread(target=_process_queue, daemon=True)
+        send_thread.start()
+
+    return {"queued": True, "id": item["id"]}
+
+
+def _process_queue():
+    while send_queue:
+        item = send_queue[0]
+        try:
+            send_marker_file(item["file"], item["host"], item["port"])
+        except Exception:
+            pass
+        send_queue.pop(0)
+        time.sleep(3)
+
+
+@app.get("/send-queue")
+def queue_status():
+    return {"items": send_queue, "sending": send_thread is not None and send_thread.is_alive()}
+
+
+@app.delete("/send-queue/{item_id}")
+def remove_from_queue(item_id: str):
+    for i, item in enumerate(send_queue):
+        if item["id"] == item_id:
+            send_queue.pop(i)
+            return {"removed": item_id}
+    return JSONResponse({"error": "not found"}, 404)
