@@ -48,6 +48,7 @@ htmlcov/
 __pycache__/
 *.pyc
 .DS_Store
+receiver_data/
 
 
 sender/outputs/

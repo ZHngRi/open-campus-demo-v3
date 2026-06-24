@@ -1,11 +1,10 @@
 """
-发送 session packet 到 IK (5005) 和 SO (5006) 两个端口。
+直接发送 TRC/MOT 文件到 IK (5005) 和 SO (5006) 两个端口。
 
 用法:
     python test_send_both.py
     python test_send_both.py --mot path/to/motion.mot --trc path/to/markers.trc
 """
-import json
 import socket
 import sys
 from pathlib import Path
@@ -17,18 +16,22 @@ SO_PORT = 5006
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEST_SO_DIR = SCRIPT_DIR / "test_so"
-DEFAULT_MOT = str(TEST_SO_DIR / "single_leg_hop_turn_around_walk.mot")
-DEFAULT_TRC = str(TEST_SO_DIR / "single_leg_hop_turn_around_walk.trc")
+DEFAULT_MOT = TEST_SO_DIR / "single_leg_hop_turn_around_walk.mot"
+DEFAULT_TRC = TEST_SO_DIR / "single_leg_hop_turn_around_walk.trc"
 
 
-def _send(host, port, packet):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect((host, port))
-        sock.sendall((json.dumps(packet) + "\n").encode("utf-8"))
-        print(f"  -> sent to {host}:{port}")
-    finally:
-        sock.close()
+def send_file(host, port, path):
+    path = Path(path)
+    data = path.read_bytes()
+    filename = path.name.encode("utf-8")
+
+    with socket.create_connection((host, port)) as sock:
+        sock.sendall(len(filename).to_bytes(4, "big"))
+        sock.sendall(filename)
+        sock.sendall(len(data).to_bytes(8, "big"))
+        sock.sendall(data)
+
+    print(f"  -> sent {path.name} ({len(data)} bytes) to {host}:{port}")
 
 
 def main():
@@ -46,24 +49,31 @@ def main():
         else:
             i += 1
 
-    if not Path(trc).exists():
+    trc = Path(trc)
+    mot = Path(mot)
+
+    if not trc.exists():
         print(f"TRC not found: {trc}")
         return
-    if not Path(mot).exists():
+    if not mot.exists():
         print(f"MOT not found: {mot}")
         return
 
-    packet = {"type": "session", "trc": trc, "mot": mot}
-
-    print(f"TRC: {trc}")
-    print(f"MOT: {mot}")
+    print(f"TRC: {trc.name}")
+    print(f"MOT: {mot.name}")
     print()
 
-    _send(IK_HOST, IK_PORT, packet)
-    _send(SO_HOST, SO_PORT, packet)
+    for label, host, port, path in (
+        ("IK", IK_HOST, IK_PORT, trc),
+        ("SO", SO_HOST, SO_PORT, mot),
+    ):
+        try:
+            send_file(host, port, path)
+        except ConnectionRefusedError:
+            print(f"  -> {label} receiver not running at {host}:{port}, skipped")
 
     print()
-    print("done — check both windows:")
+    print("done - check receiver windows:")
     print("  IK window: skeleton animation (looping)")
     print("  SO window: muscle activation")
 

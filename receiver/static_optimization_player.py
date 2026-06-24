@@ -584,7 +584,7 @@ class StaticOptimizationPlayer:
         """对指定的 .mot 文件运行 Static Optimization，然后全帧播放。
 
         check_queue: 可选 queue.Queue，播放时每帧非阻塞检查。
-                    有新 MOT 路径 → 返回，调用方循环再次进入。
+                    有新 MOT 路径 → 返回该路径，调用方立即切换。
         """
         motion_path = Path(motion_path)
         if not motion_path.exists():
@@ -593,9 +593,10 @@ class StaticOptimizationPlayer:
 
         print(f"[SO] running on: {motion_path}")
         mode = config.SO_MODE
+        next_motion_path = None
 
         if mode == "manual_per_frame":
-            self._solve_and_play(motion_path, check_queue)
+            next_motion_path = self._solve_and_play(motion_path, check_queue)
         elif mode == "analyze_then_playback":
             _run_analyze_then_playback(self._osim, motion_path,
                                        model=self.model, state=self.state)
@@ -609,6 +610,7 @@ class StaticOptimizationPlayer:
         _clear_muscle_state(self._osim, self.model, self.state)
         self.model.updVisualizer().show(self.state)
         print("[SO] reset to T-pose, switching to next mot...")
+        return next_motion_path
 
     # ------------------------------------------------------------
     # SO 求解 + 全帧播放
@@ -671,18 +673,23 @@ class StaticOptimizationPlayer:
                                 str(config.SO_RESULTS_DIR), -1.0, ".sto")
         print(f"[SO] solve done, starting full playback ({total_frames} frames)")
 
+        # ---- 预计算：每个 solved 帧的 activation，以及每帧对应的最近 solved 帧 ----
+        solved_list = sorted(selected_indices)
+        solved_activations = {}  # {frame_index: {muscle_name: value}}
+        for si in solved_list:
+            t, _ = _storage_row(states_store, si)
+            act_idx = activation_storage.findIndex(t)
+            _, act_vals = _storage_row(activation_storage, act_idx)
+            solved_activations[si] = dict(zip(act_labels, act_vals))
+
+        # 每帧映射到最近的 solved 帧
+        frame_to_solved = {}
+        for i in range(total_frames):
+            nearest = min(solved_list, key=lambda s: abs(s - i))
+            frame_to_solved[i] = nearest
+
         # ---- 全帧播放 ----
         frame_delay = 1.0 / config.FPS
-        neutral = osim.Vec3(0.6, 0.6, 0.6)
-
-        def _set_muscles_neutral():
-            for _, muscle in visual_muscles:
-                try:
-                    path = (muscle.updGeometryPath() if hasattr(muscle, "updGeometryPath")
-                            else muscle.getGeometryPath())
-                    path.setColor(self.state, neutral)
-                except Exception:
-                    pass
 
         while True:
             self._reset_to_tpose()
@@ -696,28 +703,20 @@ class StaticOptimizationPlayer:
                     except Exception:
                         item = None
                     if item is not None:
-                        return  # 退出播放，外层处理新 MOT
+                        return item  # 退出播放，外层立即处理新 MOT
 
                 # --- 关节角度（MOT 每一帧都有）---
-                frame_time = _apply_states_row_to_model(
+                _apply_states_row_to_model(
                     osim, self.model, self.state,
                     states_store, i, data_to_model,
                 )
 
-                # --- 肌肉颜色（SO 帧有数据，中间帧灰色）---
-                if i in selected_indices:
-                    act_idx = activation_storage.findIndex(frame_time)
-                    _, act_vals = _storage_row(activation_storage, act_idx)
-                    _apply_activation_to_muscles(
-                        osim, self.model, self.state, visual_muscles,
-                        dict(zip(act_labels, act_vals)),
-                    )
-                else:
-                    _set_muscles_neutral()
-                    try:
-                        self.model.realizeDynamics(self.state)
-                    except Exception:
-                        pass
+                # --- 肌肉颜色：用最近 solved 帧的 activation ---
+                si = frame_to_solved[i]
+                _apply_activation_to_muscles(
+                    osim, self.model, self.state, visual_muscles,
+                    solved_activations[si],
+                )
 
                 self.model.updVisualizer().show(self.state)
                 time.sleep(frame_delay)

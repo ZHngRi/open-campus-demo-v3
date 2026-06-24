@@ -69,7 +69,7 @@ class IKPlayer:
         """读取 TRC，batch IK 求解，循环显示。
 
         check_queue: 可选 queue.Queue，每帧非阻塞检查。
-                    收到非 None → 返回 True（调用方切到新 TRC）
+                    收到新 TRC 路径 → 返回该路径（调用方切到新 TRC）
                     收到 None    → 返回 False（调用方退出）
         """
         trc_path = Path(trc_path)
@@ -112,7 +112,7 @@ class IKPlayer:
                     pass
                 self.model.realizePosition(self.state)
                 self.model.updVisualizer().show(self.state)
-                time.sleep(frame_delay)
+                # time.sleep(frame_delay)
 
     # ------------------------------------------------------------
     # 内部
@@ -141,7 +141,7 @@ class IKPlayer:
             return None
         try:
             item = q.get_nowait()
-            return item is not None  # None → False, 其他 → True
+            return False if item is None else item
         except queue.Empty:
             return None
 
