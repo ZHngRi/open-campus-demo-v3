@@ -45,6 +45,8 @@ htmlcov/
 # VSCode
 .vscode/
 
+*.sto
+receiver/test_so/results_static_optimization/
 sender/data/
 sender/outputs/
 receiver/receiver_data/
