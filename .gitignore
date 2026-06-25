@@ -120,3 +120,4 @@ video/
 
 *.mp4
 *.mov
+receiver/test_so/results_static_optimization/static_opt_visual_demo_StaticOptimization_controls.xml
