@@ -4,168 +4,126 @@ import pymunk
 import pymunk.pygame_util
 
 
-WIDTH, HEIGHT = 1000, 650
+WIDTH, HEIGHT = 1100, 1000
 FPS = 60
 
-SHOULDER_POS = (500, 320)
-
-ARM_LENGTH = 360
-ARM_THICKNESS = 18
-ARM_MASS = 2.0
-
-DUMBBELL_MASS = 4.0
 GRAVITY = 900
+SHOULDER_POS = (500, 420)
 
-MUSCLE_TORQUE = 2_800_000
+UPPER_ARM_LENGTH = 210
+FOREARM_LENGTH = 260
+ARM_THICKNESS = 18
 
-TANGENTIAL_ARROW_SCALE = 0.025
-TANGENTIAL_ARROW_MIN = 20
-TANGENTIAL_ARROW_MAX = 180
+FOREARM_MASS = 1.8
+DUMBBELL_MASS = 8.0
+
+ELBOW_MOTOR_RATE = -2.5
+ELBOW_MOTOR_FORCE = 1_200_000
+
+HOLD_MOTOR_FORCE = 5_000_000
 
 
 def draw_arrow(screen, start, end, color, width=4):
     pygame.draw.line(screen, color, start, end, width)
-
-    sx, sy = start
-    ex, ey = end
-    angle = math.atan2(ey - sy, ex - sx)
-
+    angle = math.atan2(end[1] - start[1], end[0] - start[0])
     head_len = 18
     head_angle = math.pi / 7
 
     p1 = (
-        ex - head_len * math.cos(angle - head_angle),
-        ey - head_len * math.sin(angle - head_angle),
+        end[0] - head_len * math.cos(angle - head_angle),
+        end[1] - head_len * math.sin(angle - head_angle),
     )
     p2 = (
-        ex - head_len * math.cos(angle + head_angle),
-        ey - head_len * math.sin(angle + head_angle),
+        end[0] - head_len * math.cos(angle + head_angle),
+        end[1] - head_len * math.sin(angle + head_angle),
     )
-
     pygame.draw.polygon(screen, color, [end, p1, p2])
 
 
-def draw_arc_arrow(screen, center, radius, start_angle, end_angle, color, width=5):
-    rect = pygame.Rect(
-        center[0] - radius,
-        center[1] - radius,
-        radius * 2,
-        radius * 2,
-    )
+def create_fixed_upper_arm(space):
+    shoulder = SHOULDER_POS
+    elbow = (SHOULDER_POS[0], SHOULDER_POS[1] + UPPER_ARM_LENGTH)
 
-    pygame.draw.arc(screen, color, rect, start_angle, end_angle, width)
+    shape = pymunk.Segment(space.static_body, shoulder, elbow, ARM_THICKNESS / 2)
+    shape.color = pygame.Color(220, 175, 120, 255)
+    shape.friction = 0.8
 
-    angle = end_angle
-    end = (
-        center[0] + radius * math.cos(angle),
-        center[1] + radius * math.sin(angle),
-    )
-
-    tangent = angle + math.pi / 2
-
-    head_len = 16
-    p1 = (
-        end[0] - head_len * math.cos(tangent - math.pi / 6),
-        end[1] - head_len * math.sin(tangent - math.pi / 6),
-    )
-    p2 = (
-        end[0] - head_len * math.cos(tangent + math.pi / 6),
-        end[1] - head_len * math.sin(tangent + math.pi / 6),
-    )
-
-    pygame.draw.polygon(screen, color, [end, p1, p2])
+    space.add(shape)
+    return elbow
 
 
-def create_arm(space):
-    moment = pymunk.moment_for_box(ARM_MASS, (ARM_LENGTH, ARM_THICKNESS))
+def create_forearm(space, elbow_pos):
+    moment = pymunk.moment_for_box(FOREARM_MASS, (FOREARM_LENGTH, ARM_THICKNESS))
+    body = pymunk.Body(FOREARM_MASS, moment)
 
-    body = pymunk.Body(ARM_MASS, moment)
-    body.position = SHOULDER_POS[0] + ARM_LENGTH / 2, SHOULDER_POS[1]
+    body.position = (elbow_pos[0] + FOREARM_LENGTH / 2, elbow_pos[1])
     body.angle = 0
 
-    shape = pymunk.Poly.create_box(body, (ARM_LENGTH, ARM_THICKNESS))
+    shape = pymunk.Poly.create_box(body, (FOREARM_LENGTH, ARM_THICKNESS))
+    shape.color = pygame.Color(220, 175, 120, 255)
     shape.friction = 0.8
-    shape.color = pygame.Color(220, 180, 120, 255)
 
-    shoulder_joint = pymunk.PivotJoint(
+    elbow_joint = pymunk.PivotJoint(
         space.static_body,
         body,
-        SHOULDER_POS,
+        elbow_pos,
+        (-FOREARM_LENGTH / 2, 0),
     )
+    elbow_joint.collide_bodies = False
 
-    shoulder_joint.collide_bodies = False
+    elbow_motor = pymunk.SimpleMotor(space.static_body, body, 0.0)
+    elbow_motor.max_force = HOLD_MOTOR_FORCE
 
-    space.add(body, shape, shoulder_joint)
+    space.add(body, shape, elbow_joint, elbow_motor)
 
-    return body
+    return body, elbow_motor
 
 
-def create_dumbbell(space, arm_body):
-    end_local = (ARM_LENGTH / 2, 0)
+def create_dumbbell(space, forearm):
+    hand_pos = forearm.local_to_world((FOREARM_LENGTH / 2, 0))
 
-    moment = pymunk.moment_for_circle(DUMBBELL_MASS, 0, 30)
+    moment = pymunk.moment_for_circle(DUMBBELL_MASS, 0, 34)
     body = pymunk.Body(DUMBBELL_MASS, moment)
+    body.position = hand_pos
 
-    end_world = arm_body.local_to_world(end_local)
-    body.position = end_world
-
-    shape = pymunk.Circle(body, 30)
+    shape = pymunk.Circle(body, 34)
+    shape.color = pygame.Color(45, 45, 45, 255)
     shape.friction = 0.8
-    shape.color = pygame.Color(60, 60, 60, 255)
 
-    joint = pymunk.PinJoint(arm_body, body, end_local, (0, 0))
+    joint = pymunk.PinJoint(
+        forearm,
+        body,
+        (FOREARM_LENGTH / 2, 0),
+        (0, 0),
+    )
     joint.distance = 0
     joint.collide_bodies = False
 
     space.add(body, shape, joint)
-
     return body
 
 
+def endpoint(body, local_x):
+    p = body.local_to_world((local_x, 0))
+    return int(p.x), int(p.y)
+
+
 def reset(space):
-    for item in list(space.bodies) + list(space.shapes) + list(space.constraints):
+    for item in list(space.constraints) + list(space.shapes) + list(space.bodies):
         space.remove(item)
 
-    arm = create_arm(space)
-    dumbbell = create_dumbbell(space, arm)
+    elbow_pos = create_fixed_upper_arm(space)
+    forearm, elbow_motor = create_forearm(space, elbow_pos)
+    dumbbell = create_dumbbell(space, forearm)
 
-    return arm, dumbbell
-
-
-def get_radius_vector(shoulder, point):
-    rx = point[0] - shoulder[0]
-    ry = point[1] - shoulder[1]
-
-    radius = math.sqrt(rx * rx + ry * ry)
-
-    if radius < 1e-6:
-        return 0, 0, 0
-
-    return rx / radius, ry / radius, radius
-
-
-def get_tangent_vector_from_angular_acceleration(shoulder, point, angular_acceleration):
-    ux, uy, radius = get_radius_vector(shoulder, point)
-
-    if angular_acceleration >= 0:
-        tx = -uy
-        ty = ux
-    else:
-        tx = uy
-        ty = -ux
-
-    return tx, ty, radius
-
-
-def clamp(value, min_value, max_value):
-    return max(min_value, min(value, max_value))
+    return elbow_pos, forearm, dumbbell, elbow_motor
 
 
 def main():
     pygame.init()
 
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Arm Torque Demo")
+    pygame.display.set_caption("Fixed Upper Arm Two-Link Demo")
 
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Arial", 24)
@@ -176,12 +134,11 @@ def main():
 
     draw_options = pymunk.pygame_util.DrawOptions(screen)
 
-    arm, dumbbell = reset(space)
+    elbow_pos, forearm, dumbbell, elbow_motor = reset(space)
 
-    muscle_on = False
+    gravity_mode = False
+    motor_on = False
     running = True
-
-    previous_angular_velocity = arm.angular_velocity
 
     while running:
         dt = 1.0 / FPS
@@ -191,136 +148,74 @@ def main():
                 running = False
 
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_m:
-                    muscle_on = not muscle_on
+                if event.key == pygame.K_g:
+                    gravity_mode = not gravity_mode
+                    motor_on = False
+
+                if event.key == pygame.K_b:
+                    motor_on = not motor_on
 
                 if event.key == pygame.K_r:
-                    arm, dumbbell = reset(space)
-                    muscle_on = False
-                    previous_angular_velocity = arm.angular_velocity
+                    elbow_pos, forearm, dumbbell, elbow_motor = reset(space)
+                    gravity_mode = False
+                    motor_on = False
 
-        if muscle_on:
-            arm.torque -= MUSCLE_TORQUE
+        if gravity_mode:
+            if motor_on:
+                elbow_motor.rate = ELBOW_MOTOR_RATE
+                elbow_motor.max_force = ELBOW_MOTOR_FORCE
+            else:
+                elbow_motor.rate = 0.0
+                elbow_motor.max_force = 0.0
+        else:
+            elbow_motor.rate = 0.0
+            elbow_motor.max_force = HOLD_MOTOR_FORCE
+            forearm.angular_velocity = 0.0
+            forearm.angle = 0.0
 
         space.step(dt)
 
-        angular_velocity = arm.angular_velocity
-        angular_acceleration = (angular_velocity - previous_angular_velocity) / dt
-        previous_angular_velocity = angular_velocity
-
-        screen.fill((250, 250, 250))
+        screen.fill((255, 255, 255))
         space.debug_draw(draw_options)
 
         shoulder = SHOULDER_POS
+        elbow_i = (int(elbow_pos[0]), int(elbow_pos[1]))
+        hand_i = endpoint(forearm, FOREARM_LENGTH / 2)
+        dumbbell_pos = (int(dumbbell.position.x), int(dumbbell.position.y))
 
-        dumbbell_pos = (
-            int(dumbbell.position.x),
-            int(dumbbell.position.y),
-        )
+        pygame.draw.circle(screen, (20, 20, 20), shoulder, 11)
+        pygame.draw.circle(screen, (20, 20, 20), elbow_i, 10)
+        pygame.draw.circle(screen, (20, 20, 20), hand_i, 7)
 
-        pygame.draw.circle(screen, (20, 20, 20), shoulder, 12)
+        pygame.draw.line(screen, (0, 80, 190), elbow_i, dumbbell_pos, 4)
 
-        # 力臂 r
-        pygame.draw.line(screen, (0, 70, 180), shoulder, dumbbell_pos, 4)
-        pygame.draw.circle(screen, (0, 70, 180), dumbbell_pos, 6)
-
-        # 重力箭头：永远穿过哑铃中心
-        gravity_start = (dumbbell_pos[0], dumbbell_pos[1] - 70)
-        gravity_end = (dumbbell_pos[0], dumbbell_pos[1] + 70)
+        gravity_start = (dumbbell_pos[0], dumbbell_pos[1] - 75)
+        gravity_end = (dumbbell_pos[0], dumbbell_pos[1] + 75)
         draw_arrow(screen, gravity_start, gravity_end, (220, 0, 0), 5)
 
-        # 切向加速度箭头：方向由角加速度决定，长度由大小决定
-        tx, ty, radius = get_tangent_vector_from_angular_acceleration(
-            shoulder,
-            dumbbell_pos,
-            angular_acceleration,
-        )
+        title = font.render("Fixed upper arm + controllable forearm", True, (0, 40, 120))
+        screen.blit(title, (30, 30))
 
-        tangential_acceleration = abs(angular_acceleration) * radius
+        screen.blit(small_font.render("G: switch HOLD / GRAVITY", True, (20, 20, 20)), (30, 75))
+        screen.blit(small_font.render("B: elbow motor on/off", True, (0, 120, 60)), (30, 105))
+        screen.blit(small_font.render("R: reset", True, (60, 60, 60)), (30, 135))
 
-        tangent_arrow_length = tangential_acceleration * TANGENTIAL_ARROW_SCALE
-        tangent_arrow_length = clamp(
-            tangent_arrow_length,
-            TANGENTIAL_ARROW_MIN,
-            TANGENTIAL_ARROW_MAX,
-        )
+        mode_text = "Mode: GRAVITY" if gravity_mode else "Mode: HOLD"
+        mode_color = (180, 0, 0) if gravity_mode else (0, 120, 60)
+        screen.blit(font.render(mode_text, True, mode_color), (760, 40))
 
-        tangent_start = dumbbell_pos
-        tangent_end = (
-            int(dumbbell_pos[0] + tx * tangent_arrow_length),
-            int(dumbbell_pos[1] + ty * tangent_arrow_length),
-        )
-
-        draw_arrow(screen, tangent_start, tangent_end, (140, 0, 200), 5)
-
-        # 重力造成的力矩方向
-        draw_arc_arrow(
-            screen,
-            shoulder,
-            80,
-            math.radians(-40),
-            math.radians(80),
-            (255, 140, 0),
-            5,
-        )
-
-        # 肌肉反向力矩
-        if muscle_on:
-            draw_arc_arrow(
-                screen,
-                shoulder,
-                115,
-                math.radians(80),
-                math.radians(-40),
-                (0, 150, 70),
-                5,
-            )
-
-        title = font.render("One-link arm torque demo", True, (0, 40, 120))
-        screen.blit(title, (30, 25))
+        motor_text = "Elbow motor ON" if motor_on else "Elbow motor OFF"
+        motor_color = (0, 140, 60) if motor_on else (120, 120, 120)
+        screen.blit(font.render(motor_text, True, motor_color), (760, 80))
 
         screen.blit(
-            small_font.render("Red: gravity F = mg", True, (180, 0, 0)),
-            (30, 70),
+            small_font.render("Red: dumbbell weight F = mg", True, (180, 0, 0)),
+            (30, 175),
         )
         screen.blit(
-            small_font.render("Blue: moment arm r", True, (0, 70, 180)),
-            (30, 100),
+            small_font.render("Blue: moment arm from elbow to dumbbell", True, (0, 80, 190)),
+            (30, 205),
         )
-        screen.blit(
-            small_font.render(
-                "Purple: tangential acceleration, length changes with magnitude",
-                True,
-                (120, 0, 180),
-            ),
-            (30, 130),
-        )
-        screen.blit(
-            small_font.render("Orange: gravity torque", True, (200, 110, 0)),
-            (30, 160),
-        )
-        screen.blit(
-            small_font.render("Press M: muscle counter-torque", True, (0, 130, 60)),
-            (30, 190),
-        )
-        screen.blit(
-            small_font.render("Press R: reset", True, (60, 60, 60)),
-            (30, 220),
-        )
-
-        equation = font.render("Torque: tau = r F sin(theta)", True, (20, 20, 20))
-        screen.blit(equation, (600, 40))
-
-        acc_text = small_font.render(
-            f"Tangential acceleration scale: {tangential_acceleration:.1f}",
-            True,
-            (120, 0, 180),
-        )
-        screen.blit(acc_text, (600, 120))
-
-        status_text = "Muscle torque ON" if muscle_on else "Muscle torque OFF"
-        status_color = (0, 140, 60) if muscle_on else (180, 0, 0)
-        screen.blit(font.render(status_text, True, status_color), (600, 80))
 
         pygame.display.flip()
         clock.tick(FPS)
