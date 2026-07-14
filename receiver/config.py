@@ -85,6 +85,7 @@ MARKER_WEIGHTS = {
 # -- 路径 --
 SO_MOTION_PATH = PROJECT_ROOT / "test_so" / "single_leg_hop_turn_around_walk.mot"
 SO_EXTERNAL_LOADS_XML = None  # 例如: PROJECT_ROOT / "received_data" / "OpenSimData" / "external_loads.xml"
+SO_RESIDUAL_ACTUATORS_XML = PROJECT_ROOT / "received_data" / "OpenSimData" / "reserve_actuators.xml"
 SO_RESULTS_DIR = PROJECT_ROOT / "test_so" / "results_static_optimization"
 SO_RESULT_BASENAME = "static_opt_visual_demo"
 
@@ -103,7 +104,7 @@ SO_MAX_FRAMES = None  # 调试时可设为小整数，例如 10
 SO_MUSCLE_ONLY_ACTIVATION_TOP = True
 
 # -- 帧采样 --
-SO_STEP_INTERVAL = 50
+SO_STEP_INTERVAL = 10
 SO_INCLUDE_LAST_FRAME = True
 
 # -- 状态模型 --

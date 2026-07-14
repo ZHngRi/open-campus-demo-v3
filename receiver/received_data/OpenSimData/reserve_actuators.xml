@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OpenSimDocument Version="40600">
+    <ForceSet name="reserve_actuators">
+        <objects>
+
+            <CoordinateActuator name="residual_pelvis_tilt">
+                <coordinate>pelvis_tilt</coordinate>
+                <optimal_force>500</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+            <CoordinateActuator name="residual_pelvis_list">
+                <coordinate>pelvis_list</coordinate>
+                <optimal_force>500</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+            <CoordinateActuator name="residual_pelvis_rotation">
+                <coordinate>pelvis_rotation</coordinate>
+                <optimal_force>500</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+            <CoordinateActuator name="residual_pelvis_tx">
+                <coordinate>pelvis_tx</coordinate>
+                <optimal_force>500</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+            <CoordinateActuator name="residual_pelvis_ty">
+                <coordinate>pelvis_ty</coordinate>
+                <optimal_force>550</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+            <CoordinateActuator name="residual_pelvis_tz">
+                <coordinate>pelvis_tz</coordinate>
+                <optimal_force>500</optimal_force>
+                <min_control>-2</min_control>
+                <max_control>2</max_control>
+            </CoordinateActuator>
+
+        </objects>
+        <groups />
+    </ForceSet>
+</OpenSimDocument>

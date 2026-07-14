@@ -98,6 +98,109 @@ def _model_muscle_names(model):
     return {str(muscles.get(i).getName()) for i in range(muscles.getSize())}
 
 
+def _load_residual_actuators(osim, model):
+    """Load the configured pelvis residual CoordinateActuators before initSystem()."""
+    residual_path = Path(config.SO_RESIDUAL_ACTUATORS_XML)
+    if not residual_path.exists():
+        raise FileNotFoundError(f"Residual actuator ForceSet not found: {residual_path}")
+
+    residual_forces = osim.ForceSet(str(residual_path))
+    residual_names = [str(residual_forces.get(i).getName())
+                      for i in range(residual_forces.getSize())]
+    expected_coordinates = {
+        "residual_pelvis_tilt": "pelvis_tilt",
+        "residual_pelvis_list": "pelvis_list",
+        "residual_pelvis_rotation": "pelvis_rotation",
+        "residual_pelvis_tx": "pelvis_tx",
+        "residual_pelvis_ty": "pelvis_ty",
+        "residual_pelvis_tz": "pelvis_tz",
+    }
+    expected_names = list(expected_coordinates)
+    if residual_names != expected_names:
+        raise ValueError(
+            "Residual actuator ForceSet must contain exactly: " + ", ".join(expected_names)
+        )
+
+    coordinate_names = {
+        str(model.getCoordinateSet().get(i).getName())
+        for i in range(model.getCoordinateSet().getSize())
+    }
+    missing_coordinates = []
+    for i in range(residual_forces.getSize()):
+        actuator = osim.CoordinateActuator.safeDownCast(residual_forces.get(i))
+        if actuator is None:
+            raise TypeError(f"Force is not a CoordinateActuator: {residual_names[i]}")
+        coordinate_name = str(actuator.get_coordinate())
+        if coordinate_name != expected_coordinates[residual_names[i]]:
+            raise ValueError(
+                f"{residual_names[i]} must use coordinate "
+                f"{expected_coordinates[residual_names[i]]}, got {coordinate_name}"
+            )
+        if coordinate_name not in coordinate_names:
+            missing_coordinates.append(coordinate_name)
+    if missing_coordinates:
+        raise ValueError("Model is missing coordinates: " + ", ".join(missing_coordinates))
+
+    forces = model.updForceSet()
+    before_count = forces.getSize()
+    existing_names = {str(forces.get(i).getName()) for i in range(forces.getSize())}
+    added_names = []
+    for i, name in enumerate(residual_names):
+        if name in existing_names:
+            existing = osim.CoordinateActuator.safeDownCast(forces.get(name))
+            if existing is None:
+                raise TypeError(f"Existing force is not a CoordinateActuator: {name}")
+            continue
+        forces.cloneAndAppend(residual_forces.get(i))
+        existing_names.add(name)
+        added_names.append(name)
+
+    model.finalizeConnections()
+    after_count = forces.getSize()
+    print(f"[SO] residual ForceSet: forces before={before_count}, after={after_count}")
+    print("[SO] residual actuators added: " +
+          (", ".join(added_names) if added_names else "none (already present)"))
+    for i, name in enumerate(residual_names):
+        actuator = osim.CoordinateActuator.safeDownCast(forces.get(name))
+        source = osim.CoordinateActuator.safeDownCast(residual_forces.get(i))
+        actual = (str(actuator.get_coordinate()), float(actuator.getOptimalForce()),
+                  float(actuator.getMinControl()), float(actuator.getMaxControl()))
+        expected = (str(source.get_coordinate()), float(source.getOptimalForce()),
+                    float(source.getMinControl()), float(source.getMaxControl()))
+        if actual != expected:
+            raise ValueError(f"Existing actuator does not match ForceSet XML: {name}")
+        print(
+            f"[SO] {name}: coordinate={actuator.get_coordinate()}, "
+            f"optimal_force={actuator.getOptimalForce():g}, "
+            f"min_control={actuator.getMinControl():g}, "
+            f"max_control={actuator.getMaxControl():g}"
+        )
+    return residual_names
+
+
+def _load_so_model(osim, use_visualizer):
+    model = osim.Model(str(config.MODEL_FILE))
+    model.setUseVisualizer(use_visualizer)
+    residual_names = _load_residual_actuators(osim, model)
+    return model, residual_names
+
+
+def _residual_actuator_details(osim, model, residual_names):
+    details = {}
+    forces = model.getForceSet()
+    for name in residual_names:
+        actuator = osim.CoordinateActuator.safeDownCast(forces.get(name))
+        if actuator is None:
+            raise TypeError(f"Force is not a CoordinateActuator: {name}")
+        details[name] = (
+            str(actuator.get_coordinate()),
+            float(actuator.getOptimalForce()),
+            float(actuator.getMinControl()),
+            float(actuator.getMaxControl()),
+        )
+    return details
+
+
 def _model_visual_muscles(model):
     muscles = model.updMuscles() if hasattr(model, "updMuscles") else model.getMuscles()
     result = []
@@ -128,6 +231,31 @@ def _latest_named_values(storage):
     labels = _labels_from_storage(storage)[1:]
     _, values = _latest_storage_row(storage)
     return dict(zip(labels, values))
+
+
+def _print_residual_results(force_storage, residual_details, row_index=None):
+    if force_storage is None or force_storage.getSize() <= 0:
+        return
+    if row_index is None:
+        row_index = force_storage.getSize() - 1
+    labels = _labels_from_storage(force_storage)[1:]
+    _, values = _storage_row(force_storage, row_index)
+    named_forces = dict(zip(labels, values))
+    print("residual actuator forces and derived controls:")
+    for name, (coordinate, optimal_force, min_control, max_control) in residual_details.items():
+        if name not in named_forces:
+            print(f"    {name}: not present in StaticOptimization force storage")
+            continue
+        generalized_force = float(named_forces[name])
+        control = generalized_force / optimal_force
+        unit = "N*m" if coordinate in (
+            "pelvis_tilt", "pelvis_list", "pelvis_rotation"
+        ) else "N"
+        bound_margin = 0.01 * (max_control - min_control)
+        near_bound = (control <= min_control + bound_margin or
+                      control >= max_control - bound_margin)
+        print(f"    {name} = {generalized_force:.3f} {unit}; "
+              f"control={control:.6f}; near_bound={near_bound}")
 
 
 def _clamp01(value):
@@ -377,8 +505,7 @@ def _run_manual_per_frame(osim, motion_path, model=None, state=None):
 
     # 创建无 visualizer 的 work_model，给 AnalyzeTool + StaticOptimization 共用。
     # 这两个类内部都会 clone model → 用无 visualizer 的避免每 session 开新窗口。
-    work_model = osim.Model(str(config.MODEL_FILE))
-    work_model.setUseVisualizer(False)
+    work_model, residual_names = _load_so_model(osim, False)
     work_state = work_model.initSystem()
 
     states_model, states_tool, states_store = _create_states_storage(
@@ -396,22 +523,28 @@ def _run_manual_per_frame(osim, motion_path, model=None, state=None):
     _set_analysis_time_window(static_opt, states_store)
 
     activation_names = _model_muscle_names(model) if config.SO_MUSCLE_ONLY_ACTIVATION_TOP else None
+    residual_details = _residual_actuator_details(osim, work_model, residual_names)
     visual_muscles = _model_visual_muscles(model)
     data_to_model = _build_state_mapping(osim, model, states_store)
+    data_to_work_model = _build_state_mapping(osim, work_model, states_store)
 
     selected_indices = _selected_frame_indices(states_store.getSize())
     print(f"[SO] solving {len(selected_indices)} frames "
           f"(step_interval={config.SO_STEP_INTERVAL}, motion_rows={states_store.getSize()})")
 
     for selected_number, i in enumerate(selected_indices):
-        frame_time = _apply_states_row_to_model(osim, model, state, states_store, i, data_to_model)
+        frame_time = _apply_states_row_to_model(
+            osim, work_model, work_state, states_store, i, data_to_work_model,
+        )
 
         if selected_number == 0:
-            static_opt.begin(state)
+            static_opt.begin(work_state)
         elif selected_number == len(selected_indices) - 1:
-            static_opt.end(state)
+            static_opt.end(work_state)
         else:
-            static_opt.step(state, i)
+            static_opt.step(work_state, i)
+
+        _apply_states_row_to_model(osim, model, state, states_store, i, data_to_model)
 
         _apply_activation_to_muscles(
             osim, model, state, visual_muscles,
@@ -420,7 +553,7 @@ def _run_manual_per_frame(osim, motion_path, model=None, state=None):
         _show_state(model, state)
 
         # 每帧打印 top activation / force
-        _print_top_results(osim, frame_time, static_opt, activation_names)
+        _print_top_results(osim, frame_time, static_opt, activation_names, residual_details)
 
     # 保存结果文件
     config.SO_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -437,12 +570,12 @@ def _run_analyze_then_playback(osim, motion_path, model=None, state=None):
     config.SO_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- 离线分析 ---
-    analysis_model = osim.Model(str(config.MODEL_FILE))
-    analysis_model.setUseVisualizer(False)
+    analysis_model, residual_names = _load_so_model(osim, False)
     static_opt = _make_static_optimization(osim, analysis_model)
     analysis_model.updAnalysisSet().cloneAndAppend(static_opt)
 
     tool = osim.AnalyzeTool(analysis_model)
+    residual_details = _residual_actuator_details(osim, analysis_model, residual_names)
     tool.setName(config.SO_RESULT_BASENAME)
     tool.setCoordinatesFileName(str(motion_path))
     _call_if_exists(tool, "setLowpassCutoffFrequency", -1.0)
@@ -494,7 +627,10 @@ def _run_analyze_then_playback(osim, motion_path, model=None, state=None):
             dict(zip(activation_labels, activation_values)),
         )
         _show_state(playback_model, state)
-        _print_playback_results(osim, frame_time, activation_storage, force_storage, activation_names)
+        _print_playback_results(
+            osim, frame_time, activation_storage, force_storage,
+            activation_names, residual_details,
+        )
 
     print(f"[SO] results saved in: {config.SO_RESULTS_DIR}")
 
@@ -621,8 +757,7 @@ class StaticOptimizationPlayer:
         osim = self._osim
 
         # ---- 准备：work_model + states_store ----
-        work_model = osim.Model(str(config.MODEL_FILE))
-        work_model.setUseVisualizer(False)
+        work_model, residual_names = _load_so_model(osim, False)
         work_state = work_model.initSystem()
 
         _, _tool, states_store = _create_states_storage(
@@ -636,7 +771,11 @@ class StaticOptimizationPlayer:
         _set_analysis_time_window(static_opt, states_store)
 
         visual_muscles = _model_visual_muscles(self.model)
+        activation_names = (_model_muscle_names(work_model)
+                            if config.SO_MUSCLE_ONLY_ACTIVATION_TOP else None)
+        residual_details = _residual_actuator_details(osim, work_model, residual_names)
         data_to_model = _build_state_mapping(osim, self.model, states_store)
+        data_to_work_model = _build_state_mapping(osim, work_model, states_store)
 
         selected_indices = set(_selected_frame_indices(total_frames))
         selected_list = sorted(selected_indices)
@@ -645,16 +784,21 @@ class StaticOptimizationPlayer:
 
         for sel_n, i in enumerate(selected_list):
             frame_time = _apply_states_row_to_model(
-                osim, self.model, self.state,
-                states_store, i, data_to_model,
+                osim, work_model, work_state,
+                states_store, i, data_to_work_model,
             )
 
             if sel_n == 0:
-                static_opt.begin(self.state)
+                static_opt.begin(work_state)
             elif sel_n == len(selected_list) - 1:
-                static_opt.end(self.state)
+                static_opt.end(work_state)
             else:
-                static_opt.step(self.state, i)
+                static_opt.step(work_state, i)
+
+            _apply_states_row_to_model(
+                osim, self.model, self.state,
+                states_store, i, data_to_model,
+            )
 
             # 可视化当前 SO 帧：关节姿态 + 肌肉 activation 颜色
             _apply_activation_to_muscles(
@@ -662,7 +806,9 @@ class StaticOptimizationPlayer:
                 _latest_named_values(static_opt.getActivationStorage()),
             )
             _show_state(self.model, self.state)
-            _print_top_results(osim, frame_time, static_opt)
+            _print_top_results(
+                osim, frame_time, static_opt, activation_names, residual_details,
+            )
 
         activation_storage = static_opt.getActivationStorage()
         act_labels = _labels_from_storage(activation_storage)[1:]
@@ -722,7 +868,8 @@ class StaticOptimizationPlayer:
                 # time.sleep(frame_delay)
 
 
-def _print_top_results(osim, frame_time, static_opt, activation_names=None):
+def _print_top_results(osim, frame_time, static_opt, activation_names=None,
+                       residual_details=None):
     """打印当前帧的 top activation 和 force。"""
     print(f"\ntime = {frame_time:.6f}")
 
@@ -736,9 +883,12 @@ def _print_top_results(osim, frame_time, static_opt, activation_names=None):
     forces = _top_values(static_opt.getForceStorage(), config.SO_TOP_N, by_abs=True)
     for name, value in forces:
         print(f"    {name} = {value:.3f}")
+    if residual_details:
+        _print_residual_results(static_opt.getForceStorage(), residual_details)
 
 
-def _print_playback_results(osim, frame_time, activation_storage, force_storage, activation_names=None):
+def _print_playback_results(osim, frame_time, activation_storage, force_storage,
+                            activation_names=None, residual_details=None):
     """播放模式：根据时间查找最近的结果行并打印。"""
     activation_index = activation_storage.findIndex(frame_time)
     force_index = force_storage.findIndex(frame_time)
@@ -762,3 +912,5 @@ def _print_playback_results(osim, frame_time, activation_storage, force_storage,
     force_pairs = sorted(zip(force_labels, force_values), key=lambda item: abs(item[1]), reverse=True)[:config.SO_TOP_N]
     for name, value in force_pairs:
         print(f"    {name} = {value:.3f}")
+    if residual_details:
+        _print_residual_results(force_storage, residual_details, force_index)
