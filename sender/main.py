@@ -6,6 +6,8 @@ Start:
 """
 
 import shutil
+import logging
+import os
 import threading
 import time
 import uuid
@@ -14,17 +16,18 @@ from pathlib import Path
 import zipfile
 import requests
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from sender.json_store import (
-    read_sessions, add_session, update_session, write_sessions,
+    read_sessions, add_session, update_session, mutate_session, write_sessions,
     read_active, write_active,
 )
 from sender.marker_sender import send_session
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 send_queue = []
 send_results = []
@@ -50,6 +53,7 @@ PROCESSING_STATUSES = {
     "recording", "uploading", "submitted",
 }
 RESULT_EXTENSIONS = {".trc", ".mot", ".osim", ".zip", ".json"}
+PROCESSING_TARGETS = {"opencap", "planb", "race"}
 
 
 def _find_session(store, session_id):
@@ -183,6 +187,16 @@ def _has_result_files(session):
 def _repair_local_result_statuses(store):
     repaired = 0
     for session in store.get("sessions", []):
+        if session.get("processing_target") in PROCESSING_TARGETS:
+            winner = session.get("winner_results") or {}
+            if not winner:
+                continue
+            if not Path(winner.get("trc_path", "")).is_file() or not Path(winner.get("mot_path", "")).is_file():
+                continue
+            if session.get("status") != "done":
+                session["status"] = "done"
+                repaired += 1
+            continue
         result_dir = _result_dir_for_session(session)
         if not _dir_has_result_files(result_dir):
             continue
@@ -454,7 +468,6 @@ def _sync_remote_sessions(download_missing=True):
 
         updates = {
             "name": _remote_name(rs),
-            "status": _remote_status(rs),
             "api_session_id": api_sid,
             "created_at": _remote_created_at(rs) or session.get("created_at", ""),
             "remote_trial_status": (
@@ -462,6 +475,12 @@ def _sync_remote_sessions(download_missing=True):
                 if rs.get("trials") else rs.get("status", "")
             ),
         }
+        remote_status = _remote_status(rs)
+        if session.get("processing_target") in PROCESSING_TARGETS:
+            updates["branches"] = session.get("branches", {})
+            updates["branches"].setdefault("opencap", _branch_state())["remote_status"] = remote_status
+        else:
+            updates["status"] = remote_status
 
         local_match = _matching_local_without_api(store, rs, used_local_ids)
         if local_match and local_match is not session:
@@ -488,7 +507,7 @@ def _sync_remote_sessions(download_missing=True):
     downloading = 0
     if download_missing:
         for s in read_sessions().get("sessions", []):
-            if s.get("api_session_id") and s.get("status") == "done":
+            if s.get("api_session_id") and s.get("status") == "done" and s.get("processing_target") not in PROCESSING_TARGETS:
                 if _has_result_files(s):
                     if s.get("download_status") != "done":
                         update_session(s["session_id"], {
@@ -524,6 +543,201 @@ def _sync_remote_sessions(download_missing=True):
 
 
 # ============================================================
+# Local/remote processing targets and race coordination
+# ============================================================
+
+def _branch_state():
+    return {"status": "queued", "started_at": "", "finished_at": "", "error": ""}
+
+
+def _target_branches(target):
+    return ("opencap", "planb") if target == "race" else (target,)
+
+
+def _mark_branch_started(session_id, branch, pid=None, details=None):
+    def _mutate(session):
+        state = session.setdefault("branches", {}).setdefault(branch, _branch_state())
+        state.update({"status": "processing", "started_at": datetime.now().isoformat(), "error": ""})
+        if pid is not None:
+            state["pid"] = pid
+        if details:
+            state.update(details)
+        session["status"] = "processing"
+        session["note"] = f"{branch} processing"
+    mutate_session(session_id, _mutate)
+
+
+def _finish_branch(session_id, branch, success, result=None, error=""):
+    """Atomically elect the first *validated* branch and prevent later overwrite."""
+    result = result or {}
+
+    def _mutate(session):
+        branches = session.setdefault("branches", {})
+        state = branches.setdefault(branch, _branch_state())
+        state.update({"finished_at": datetime.now().isoformat()})
+        if success:
+            state.update({"status": "done", "error": "", **result})
+            if not session.get("winner"):
+                session["winner"] = branch
+                session["status"] = "done"
+                session["winner_results"] = {
+                    "trc_path": result["trc_path"],
+                    "mot_path": result["mot_path"],
+                }
+                session["result_dir"] = result.get("result_dir", session.get("result_dir", ""))
+                session["note"] = f"Validated winner: {branch}"
+            else:
+                state["status"] = "backup"
+                session["note"] = f"Validated winner: {session['winner']}; {branch} kept as backup"
+            return
+
+        state.update({"status": "failed", "error": error[:400]})
+        expected = _target_branches(session.get("processing_target", "opencap"))
+        if all(branches.get(name, {}).get("status") == "failed" for name in expected):
+            session["status"] = "failed"
+            session["note"] = "All selected processing branches failed"
+        elif not session.get("winner"):
+            session["status"] = "processing"
+            session["note"] = f"{branch} failed; waiting for another branch"
+
+    mutate_session(session_id, _mutate)
+
+
+def _validate_result_pair(trc_path, mot_path):
+    from sender.planb_adapter import validate_trc_mot
+    return validate_trc_mot(trc_path, mot_path)
+
+
+def _opencap_result_pair(session_id):
+    """Resolve the exact OpenCap export layout observed locally and created by process_session.
+
+    `process_session` records its trial as `test`; downloaded OpenCap archives contain one
+    `OpenCapData_*` directory with `MarkerData/test.trc` and
+    `OpenSimData/Kinematics/test.mot`.  Ambiguity is an error, never a best-effort glob.
+    """
+    session = _find_session(read_sessions(), session_id)
+    result_dir = _result_dir_for_session(session)
+    roots = [p for p in result_dir.iterdir() if p.is_dir() and p.name.startswith("OpenCapData_")]
+    if len(roots) != 1:
+        raise RuntimeError(f"Expected exactly one OpenCapData directory in {result_dir}, found {len(roots)}")
+    root = roots[0]
+    trc = root / "MarkerData" / "test.trc"
+    mot = root / "OpenSimData" / "Kinematics" / "test.mot"
+    if not trc.is_file() or not mot.is_file():
+        raise RuntimeError(f"OpenCap expected exports are missing: {trc}; {mot}")
+    return trc, mot, result_dir
+
+
+def _run_planb_branch(session_id):
+    session = _find_session(read_sessions(), session_id)
+    if not session:
+        return
+    from sender.planb_adapter import run_planb
+    task_dir = SESSIONS / session_id
+    try:
+        result = run_planb(
+            session["video_path"], task_dir,
+            on_started=lambda pid, output: _mark_branch_started(
+                session_id, "planb", pid, {"output_root": str(output)}
+            ),
+        )
+        _finish_branch(session_id, "planb", True, {
+            "trc_path": result["trc_path"], "mot_path": result["mot_path"],
+            "result_dir": str(task_dir), "duration_seconds": result["duration_seconds"],
+            "pid": result["pid"], "exit_code": result["exit_code"],
+            "log_path": result["log_path"], "validation": result["validation_stdout"].strip(),
+            "parameters": result["parameters"],
+        })
+    except Exception as exc:
+        logger.exception("Plan B branch failed for session %s", session_id)
+        details = exc.args[1] if len(exc.args) > 1 and isinstance(exc.args[1], dict) else {}
+        _finish_branch(session_id, "planb", False, error=f"{exc}; log={details.get('log_path', '')}")
+
+
+def _run_opencap_branch(session_id):
+    session = _find_session(read_sessions(), session_id)
+    if not session:
+        return
+    _mark_branch_started(session_id, "opencap")
+    try:
+        from sender.opencap_client import process_session
+        api_sid = process_session(
+            session_id,
+            on_api_session_created=lambda value: update_session(session_id, {"api_session_id": value}),
+            video_path=session["video_path"],
+        )
+        trc, mot, result_dir = _opencap_result_pair(session_id)
+        validation = _validate_result_pair(trc, mot)
+        _finish_branch(session_id, "opencap", True, {
+            "trc_path": str(trc), "mot_path": str(mot), "result_dir": str(result_dir),
+            "api_session_id": api_sid, "validation": validation["validation_stdout"].strip(),
+        })
+    except Exception as exc:
+        logger.exception("OpenCap branch failed for session %s", session_id)
+        _finish_branch(session_id, "opencap", False, error=str(exc))
+
+
+def _start_selected_processing(session_id):
+    session = _find_session(read_sessions(), session_id)
+    if not session:
+        raise KeyError(session_id)
+    target = session.get("processing_target", "opencap")
+    if target not in PROCESSING_TARGETS:
+        raise ValueError(f"Unsupported processing_target: {target}")
+    mutate_session(session_id, lambda value: value.update({
+        "status": "processing", "note": "Selected processing queued",
+    }))
+    for branch in _target_branches(target):
+        worker = _run_opencap_branch if branch == "opencap" else _run_planb_branch
+        threading.Thread(target=worker, args=(session_id,), daemon=True).start()
+
+
+def _pid_is_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _recover_interrupted_planb_sessions():
+    """Recover only explicit, validator-confirmed Plan B outputs after a server reload.
+
+    Uvicorn reload can replace the process that owns an in-memory worker thread while
+    its child process finishes.  This uses the persisted per-session output root and
+    the exact stable names, never a directory-wide extension search.
+    """
+    for session in read_sessions().get("sessions", []):
+        branch = (session.get("branches") or {}).get("planb") or {}
+        if branch.get("status") not in {"queued", "processing"}:
+            continue
+        video_path = Path(session.get("video_path", ""))
+        output_root = Path(branch.get("output_root", ""))
+        if not video_path.is_file() or not output_root.is_dir():
+            continue
+        trc = output_root / video_path.stem / f"{video_path.stem}.trc"
+        mot = output_root / video_path.stem / f"{video_path.stem}.mot"
+        if trc.is_file() and mot.is_file():
+            try:
+                validation = _validate_result_pair(trc, mot)
+            except Exception:
+                logger.exception("Plan B recovery validation failed for session %s", session["session_id"])
+                continue
+            from sender.planb_adapter import planb_parameters
+            _finish_branch(session["session_id"], "planb", True, {
+                "trc_path": str(trc), "mot_path": str(mot),
+                "result_dir": str(SESSIONS / session["session_id"]),
+                "pid": branch.get("pid"), "exit_code": 0,
+                "log_path": str(SESSIONS / session["session_id"] / "planb_process.log"),
+                "validation": validation["validation_stdout"].strip(),
+                "parameters": planb_parameters(),
+            })
+        elif branch.get("pid") and not _pid_is_alive(branch["pid"]):
+            _finish_branch(session["session_id"], "planb", False,
+                           error="Plan B worker stopped before validated outputs were available")
+
+
+# ============================================================
 # Page
 # ============================================================
 
@@ -537,15 +751,29 @@ def index():
 # ============================================================
 
 @app.post("/videos/upload")
-def upload_video(file: UploadFile = File(...)):
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+def upload_video(
+    file: UploadFile = File(...),
+    processing_target: str = Form("opencap"),
+):
+    if processing_target not in PROCESSING_TARGETS:
+        return JSONResponse({"error": "Unsupported processing target"}, 422)
+    if not file.filename:
+        return JSONResponse({"error": "Upload filename is required"}, 422)
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in {".mp4", ".mov"}:
+        return JSONResponse({"error": "Only .mp4 and .mov uploads are supported"}, 422)
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
     video_dir = VIDEOS / session_id
     video_dir.mkdir(parents=True, exist_ok=True)
 
-    video_path = video_dir / "input.mp4"
+    video_path = video_dir / ("input" + suffix)
     with open(video_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    if video_path.stat().st_size == 0:
+        video_path.unlink(missing_ok=True)
+        return JSONResponse({"error": "Uploaded video is empty"}, 422)
 
+    branches = {name: _branch_state() for name in _target_branches(processing_target)}
     add_session({
         "session_id": session_id,
         "name": file.filename or "unknown",
@@ -554,9 +782,12 @@ def upload_video(file: UploadFile = File(...)):
         "status": "uploaded",
         "created_at": datetime.now().isoformat(),
         "note": "",
+        "processing_target": processing_target,
+        "branches": branches,
+        "winner": "",
     })
 
-    return {"session_id": session_id}
+    return {"session_id": session_id, "processing_target": processing_target}
 
 
 # ============================================================
@@ -695,28 +926,29 @@ def sync_all():
 
 @app.post("/sessions/{session_id}/process-opencap")
 def process_opencap(session_id: str):
-    video_path = VIDEOS / session_id / "input.mp4"
-    if not video_path.exists():
-        return JSONResponse({"error": f"Video file not found: {video_path}"}, 404)
-
-    update_session(session_id, {"status": "processing", "note": "Submitted to OpenCap API"})
-
-    def _run():
-        from sender.opencap_client import process_session
-        try:
-            def _save_api_session_id(api_sid):
-                update_session(session_id, {"api_session_id": api_sid})
-
-            api_sid = process_session(
-                session_id,
-                on_api_session_created=_save_api_session_id,
-            )
-            update_session(session_id, {"status": "done", "api_session_id": api_sid})
-        except Exception as e:
-            update_session(session_id, {"status": "failed", "note": str(e)[:200]})
-
-    threading.Thread(target=_run, daemon=True).start()
+    session = _find_session(read_sessions(), session_id)
+    if not session:
+        return JSONResponse({"error": "Session not found"}, 404)
+    if session.get("processing_target") not in (None, "opencap"):
+        return JSONResponse({"error": "This session was not created for OpenCap-only processing"}, 409)
+    mutate_session(session_id, lambda value: value.update({
+        "processing_target": "opencap", "branches": {"opencap": _branch_state()}, "winner": "",
+    }))
+    _start_selected_processing(session_id)
     return {"session_id": session_id, "status": "processing"}
+
+
+@app.post("/sessions/{session_id}/start")
+def start_selected_processing(session_id: str):
+    session = _find_session(read_sessions(), session_id)
+    if not session:
+        return JSONResponse({"error": "Session not found"}, 404)
+    if not Path(session.get("video_path", "")).is_file():
+        return JSONResponse({"error": "Uploaded video file is missing"}, 404)
+    if session.get("status") == "processing":
+        return JSONResponse({"error": "Session is already processing"}, 409)
+    _start_selected_processing(session_id)
+    return {"session_id": session_id, "status": "processing", "processing_target": session.get("processing_target")}
 
 
 # ============================================================
@@ -725,6 +957,7 @@ def process_opencap(session_id: str):
 
 @app.get("/sessions")
 def list_sessions():
+    _recover_interrupted_planb_sessions()
     store = read_sessions()
     changed = _restore_orphan_uploads(store)
     changed += _repair_local_result_statuses(store)
@@ -755,15 +988,21 @@ def session_files(session_id: str):
         return JSONResponse({"error": "Session not found"}, 404)
 
     files = []
-    for f in result_dir.rglob("*"):
-        if f.is_dir():
-            continue
-        if f.suffix.lower() in RESULT_EXTENSIONS:
-            files.append({
-                "file_name": f.name,
-                "file_path": str(f),
-                "file_type": f.suffix[1:],
-            })
+    winner_results = session.get("winner_results") if session else None
+    if winner_results:
+        for path in (Path(winner_results.get("trc_path", "")), Path(winner_results.get("mot_path", ""))):
+            if path.is_file():
+                files.append({"file_name": path.name, "file_path": str(path), "file_type": path.suffix[1:]})
+    else:
+        for f in result_dir.rglob("*"):
+            if f.is_dir():
+                continue
+            if f.suffix.lower() in RESULT_EXTENSIONS:
+                files.append({
+                    "file_name": f.name,
+                    "file_path": str(f),
+                    "file_type": f.suffix[1:],
+                })
 
     if session and files:
         updates = {}

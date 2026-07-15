@@ -7,7 +7,7 @@
 <style>
 *{box-sizing:border-box}
 body{font-family:monospace;max-width:900px;margin:20px auto;padding:10px;background:#111;color:#eee}
-button,input{padding:6px 12px;margin:3px;font-family:inherit;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+button,input,select{padding:6px 12px;margin:3px;font-family:inherit;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
 button:hover{background:#444}
 button:disabled{opacity:.5;cursor:not-allowed}
 .section{border:1px solid #333;padding:12px;margin:10px 0;border-radius:4px}
@@ -34,6 +34,13 @@ h2{font-size:16px;margin:0 0 8px;color:#0cf}
 <div class="section">
   <h2>Upload Video</h2>
   <input type="file" id="videoFile" accept=".mp4,.mov">
+  <label>Process with:
+    <select id="processingTarget">
+      <option value="opencap">OpenCap</option>
+      <option value="planb">Linux Plan B</option>
+      <option value="race">Race Both</option>
+    </select>
+  </label>
   <button id="btnUpload" onclick="uploadVideo()">Upload</button>
   <div id="uploadMsg" class="result"></div>
 </div>
@@ -109,6 +116,7 @@ async function uploadVideo() {
   btn.disabled = true; btn.textContent = "Uploading...";
   var fd = new FormData();
   fd.append("file", f);
+  fd.append("processing_target", document.getElementById("processingTarget").value);
   try {
     var data = await rawFetch("POST", "/videos/upload", fd);
     toast("Upload complete: " + data.session_id, "ok");
@@ -138,6 +146,18 @@ function isPendingUpload(s) {
   return s.video_path && !s.api_session_id && s.status !== "processing" && s.status !== "done";
 }
 
+function branchSummary(s) {
+  if (!s.branches) return "";
+  var labels = {opencap: "OpenCap", planb: "Linux Plan B"};
+  var parts = [];
+  for (var key in labels) {
+    if (!s.branches[key]) continue;
+    parts.push(labels[key] + ": " + esc(s.branches[key].status || "queued"));
+  }
+  if (s.processing_target === "race") parts.push("Winner: " + esc(s.winner || "none"));
+  return parts.length ? '<div style="font-size:12px;color:#aaa;margin-top:2px">' + parts.join(" | ") + '</div>' : "";
+}
+
 var autoRefreshTimer = null;
 var loadingSessions = false;
 
@@ -145,6 +165,11 @@ function needsAutoRefresh(sessions) {
   for (var i = 0; i < sessions.length; i++) {
     var s = sessions[i];
     if (s.status === "processing" || s.download_status === "downloading") return true;
+    if (s.branches) {
+      for (var branch in s.branches) {
+        if (s.branches[branch].status === "queued" || s.branches[branch].status === "processing") return true;
+      }
+    }
   }
   return false;
 }
@@ -170,7 +195,7 @@ function renderPendingUploads(sessions) {
     var st = s.status;
     html += '<div style="padding:4px;margin:4px 0;border-bottom:1px solid #222">' +
       '<b>' + esc(s.name || "input.mp4") + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + '] ' +
-      '<button onclick="processOpenCap(\'' + jsArg(sid) + '\')">Send to OpenCap API</button>' +
+      '<button onclick="startProcessing(\'' + jsArg(sid) + '\')">Start ' + esc(s.processing_target || "opencap") + '</button>' +
       ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
       '</div>';
   }
@@ -188,7 +213,7 @@ function renderSessions(sessions) {
     var isRemote = sid.startsWith("remote_");
     if (st === "processing") action = '<span class="spinner"></span> Processing... <button onclick="loadSessions()">Refresh</button>';
     else if (st === "done") action = '<button onclick="showFiles(\'' + jsArg(sid) + '\')">Files</button>';
-    else if (st === "failed" && !isRemote && s.video_path) action = '<span style="color:#f44">Failed</span> <button onclick="processOpenCap(\'' + jsArg(sid) + '\')">Retry</button>';
+    else if (st === "failed" && !isRemote && s.video_path) action = '<span style="color:#f44">Failed</span> <button onclick="startProcessing(\'' + jsArg(sid) + '\')">Retry</button>';
     else if (st === "failed") action = '<span style="color:#f44">Remote failed</span>';
 
     var download = "";
@@ -199,7 +224,7 @@ function renderSessions(sessions) {
     var remoteTag = s.api_session_id ? ' <span style="color:#888">OpenCap</span>' : "";
 
     html += '<div style="padding:4px;margin:4px 0;border-bottom:1px solid #222">' +
-      '<b>' + name + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + ']' + remoteTag + download + ' ' + action +
+      '<b>' + name + '</b> <span style="color:#888">' + esc(sid) + '</span> [' + esc(st) + ']' + remoteTag + download + ' ' + action + branchSummary(s) +
       ' <button onclick="deleteSession(\'' + jsArg(sid) + '\')" style="background:#633;font-size:11px">x</button>' +
       '</div>';
   }
@@ -236,10 +261,10 @@ async function loadSessions(opts) {
 }
 
 // ---- OpenCap Processing ----
-async function processOpenCap(sid) {
-  toast("Sent to OpenCap API. Processing started...", "info");
-  rawFetch("POST", "/sessions/" + sid + "/process-opencap").then(function() {
-    toast("Submitted to OpenCap API", "ok");
+async function startProcessing(sid) {
+  toast("Processing started...", "info");
+  rawFetch("POST", "/sessions/" + sid + "/start").then(function() {
+    toast("Processing queued", "ok");
     loadSessions();
   }).catch(function(e) {
     toast("Processing failed: " + e.message, "err");

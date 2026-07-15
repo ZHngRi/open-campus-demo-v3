@@ -87,7 +87,7 @@ def _token():
     return token
 
 
-def process_session(session_id, on_api_session_created=None):
+def process_session(session_id, on_api_session_created=None, video_path=None):
     """
     上传视频、等待 OpenCap 处理、下载结果。
     session_id 对应 data/sessions/{session_id}/
@@ -96,7 +96,9 @@ def process_session(session_id, on_api_session_created=None):
     token = _token()
     headers = {"Authorization": f"Token {token}"}
 
-    video_path = VIDEOS / session_id / "input.mp4"
+    video_path = Path(video_path) if video_path else VIDEOS / session_id / "input.mp4"
+    if not video_path.is_file() or video_path.stat().st_size == 0:
+        raise FileNotFoundError(f"Video file not found or empty: {video_path}")
     result_dir = SESSIONS / session_id
     result_dir.mkdir(parents=True, exist_ok=True)
 
