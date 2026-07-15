@@ -118,6 +118,8 @@ dependencies:
   - pydantic-core=2.46.4
   - pydantic-extra-types=2.11.1
   - pydantic-settings=2.14.2
+  - psutil
+  - pyside6
   - pygments=2.20.0
   - pysocks=1.7.1
   - python=3.12.13

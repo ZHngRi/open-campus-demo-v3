@@ -76,6 +76,13 @@ class NativeControlPanel(QWidget):
         sessions.layout().addLayout(buttons); root.addWidget(sessions, 1)
         self.session_details = self._status_label("Selected Session Details: none")
         sessions.layout().addWidget(self.session_details)
+        self.planb_indicator = QLabel(self)
+        self.planb_indicator.setStyleSheet("color: #43d17a; font-weight: bold;")
+        self.planb_indicator.hide()
+        self._planb_frame = 0
+        self._planb_active_count = 0
+        self._planb_timer = QTimer(self); self._planb_timer.setInterval(140); self._planb_timer.timeout.connect(self._advance_planb_indicator)
+        sessions.layout().addWidget(self.planb_indicator)
         files = self._group("Result Files"); form = QFormLayout(); self.trc = QComboBox(); self.mot = QComboBox(); form.addRow("IK TRC", self.trc); form.addRow("IK MOT (for SO)", self.mot); files.layout().addLayout(form)
         self.files_status = self._status_label("Select a session to load its result files."); files.layout().addWidget(self.files_status)
         self.refresh_files_btn = BusyButton("Refresh Files"); self.refresh_files_btn.clicked.connect(self.load_files); files.layout().addWidget(self.refresh_files_btn); root.addWidget(files)
@@ -165,6 +172,10 @@ class NativeControlPanel(QWidget):
         self.table.resizeRowsToContents()
         if active and not self.poll_timer.isActive(): self.poll_timer.start(POLL_INTERVAL_MS)
         elif not active: self.poll_timer.stop()
+        self._set_planb_activity(sum(
+            1 for session in self.sessions
+            if (session.get("branches") or {}).get("planb", {}).get("status") in {"queued", "processing"}
+        ))
     def selected_id(self):
         row = self.table.currentRow(); return self.table.item(row, 0).data(256) if row >= 0 and self.table.item(row, 0) else ""
     def process_selected(self):
@@ -226,7 +237,8 @@ class NativeControlPanel(QWidget):
         for key in ("opencap", "planb"):
             if key in branches:
                 state = branches[key].get("status", "queued")
-                lines.append(f"{self._branch_label(key)}: {'Backup result' if state == 'backup' else state}")
+                marker = "◐ " if key == "planb" and state in {"queued", "processing"} else ""
+                lines.append(f"{self._branch_label(key)}: {marker}{'Backup result' if state == 'backup' else state}")
         if session.get("winner"):
             lines.append(f"Winner: {self._branch_label(session['winner'])}")
         return "\n".join(lines)
@@ -242,6 +254,22 @@ class NativeControlPanel(QWidget):
         details.append(f"Winner: {self._branch_label(session.get('winner')) if session.get('winner') else 'None'}")
         if session.get("note"): details.append(f"Message: {session['note']}")
         self.session_details.setText(" | ".join(details))
+
+    def _set_planb_activity(self, count):
+        self._planb_active_count = count
+        if count:
+            self.planb_indicator.show()
+            if not self._planb_timer.isActive(): self._planb_timer.start()
+            self._advance_planb_indicator()
+        else:
+            self._planb_timer.stop(); self.planb_indicator.hide()
+
+    def _advance_planb_indicator(self):
+        frames = ("◐", "◓", "◑", "◒")
+        self.planb_indicator.setText(
+            f"{frames[self._planb_frame]} Plan B processing: {self._planb_active_count} active session(s)"
+        )
+        self._planb_frame = (self._planb_frame + 1) % len(frames)
     def send_selected(self):
         trc, mot, host = self.trc.currentData() or "", self.mot.currentData() or "", self.host.text().strip()
         if not (trc or mot): self._error("Select at least one TRC or MOT file."); return

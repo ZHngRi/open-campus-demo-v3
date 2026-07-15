@@ -142,6 +142,56 @@ ports:
 - IK / TRC port: `5005`
 - SO / MOT port: `5006`
 
+## Native Desktop Demo
+
+`receiver/demo_host.py` is the Windows desktop host for the same sender backend
+and the two existing OpenSim receiver processes. Its left side is built entirely
+from PySide6 widgets (there is no browser or WebView): it connects to the
+FastAPI service, uploads `.mp4`/`.mov` videos, manages sessions, selects backend
+reported `.trc`/`.mot` paths, saves `/active-file`, and invokes the existing
+`/send-active-file` queue. The TCP protocol remains in `sender/marker_sender.py`.
+
+Install the additional desktop package into the existing environment:
+
+```powershell
+conda activate opensim452
+conda install -c conda-forge pyside6
+```
+
+`psutil` is used for exact Visualizer PID and port-owner checks and is now
+declared in `environment-opensim452.yml` (it was already importable in the
+current exported environment). Start the FastAPI sender first, then run:
+
+```powershell
+conda activate opensim452
+python -u receiver/demo_host.py
+```
+
+Enter the full Sender Server URL, for example `http://127.0.0.1:8056`, then
+click **Connect**. The toolbar switches IK/SO between side-by-side and
+top-and-bottom layouts, hides the control panel, enters full screen, retries an
+embedding, or restarts one receiver. Splitter positions, geometry, server URL,
+ports, layout, and control visibility are stored in
+`receiver/demo_host_config.json`.
+
+At startup the host snapshots `simbody-visualizer.exe` PIDs, starts IK alone,
+waits for its exact `[ik] listening on ...` receiver log, and only accepts one
+new PID with one visible top-level HWND. It embeds that HWND, then repeats the
+same procedure for SO after `[so] listening on ...`. It uses `EnumWindows`,
+`GetWindowThreadProcessId`, `GetWindowLongPtrW`, `SetWindowLongPtrW`,
+`SetParent`, `SetWindowPos`, and `ShowWindow`, with explicit 64-bit ctypes
+signatures. It never kills all Python or Simbody processes; shutdown only closes
+the recorded HWNDs and the `QProcess` instances it started.
+
+The host sets Per-Monitor-V2 DPI awareness before Qt starts. Test embedded GLUT
+windows at 100% and at 125%/150% display scale. Windows can impose limitations
+when an embedded child and host move across monitors with different DPI modes;
+keep the host and both Visualizers on one monitor if scaling artifacts appear.
+If a port is already occupied, the host shows the owning PID and does not kill
+it. If embedding fails, use **Retry Embed** after resolving the reported PID or
+HWND ambiguity. Confirm firewall access to TCP `5005` and `5006` when the sender
+runs on a different machine.
+
 ## Typical Workflow
 
 1. Start `ik_receiver.py` and/or `so_receiver.py` on the receiver machine.
