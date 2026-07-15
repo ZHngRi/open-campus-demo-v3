@@ -1,0 +1,26 @@
+{
+  "backend_url": "http://100.111.140.103:8056",
+  "receiver_host": "100.82.248.104",
+  "ik_port": 5005,
+  "so_port": 5006,
+  "main_window_geometry": {
+    "x": 0,
+    "y": -8,
+    "width": 1920,
+    "height": 1009
+  },
+  "controls_visible": true,
+  "visualizer_layout": "horizontal",
+  "outer_splitter_sizes": [
+    575,
+    1336
+  ],
+  "horizontal_visualizer_sizes": [
+    664,
+    663
+  ],
+  "vertical_visualizer_sizes": [
+    500,
+    500
+  ]
+}

@@ -5,21 +5,21 @@
 
             <CoordinateActuator name="residual_pelvis_tilt">
                 <coordinate>pelvis_tilt</coordinate>
-                <optimal_force>500</optimal_force>
+                <optimal_force>100</optimal_force>
                 <min_control>-2</min_control>
                 <max_control>2</max_control>
             </CoordinateActuator>
 
             <CoordinateActuator name="residual_pelvis_list">
                 <coordinate>pelvis_list</coordinate>
-                <optimal_force>500</optimal_force>
+                <optimal_force>100</optimal_force>
                 <min_control>-2</min_control>
                 <max_control>2</max_control>
             </CoordinateActuator>
 
             <CoordinateActuator name="residual_pelvis_rotation">
                 <coordinate>pelvis_rotation</coordinate>
-                <optimal_force>500</optimal_force>
+                <optimal_force>100</optimal_force>
                 <min_control>-2</min_control>
                 <max_control>2</max_control>
             </CoordinateActuator>
@@ -33,14 +33,14 @@
 
             <CoordinateActuator name="residual_pelvis_ty">
                 <coordinate>pelvis_ty</coordinate>
-                <optimal_force>550</optimal_force>
+                <optimal_force>100</optimal_force>
                 <min_control>-2</min_control>
                 <max_control>2</max_control>
             </CoordinateActuator>
 
             <CoordinateActuator name="residual_pelvis_tz">
                 <coordinate>pelvis_tz</coordinate>
-                <optimal_force>500</optimal_force>
+                <optimal_force>100</optimal_force>
                 <min_control>-2</min_control>
                 <max_control>2</max_control>
             </CoordinateActuator>
